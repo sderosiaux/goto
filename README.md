@@ -25,7 +25,11 @@ goto react     # → /Users/you/dev/react-dashboard
 - **Fuzzy matching** - Type partial names, it finds the best match
 - **Instant indexing** - Uses macOS Spotlight + directory scanning
 - **Recency-aware** - When scores tie, recently accessed projects rank higher
+- **Git integration** - Show branch and dirty status with `--git` flag
+- **Recent list** - `goto -` shows your last accessed projects
+- **Statistics** - `goto stats` shows access patterns and most used projects
 - **Auto-launch** - Optionally run a command after navigation (e.g., open your editor)
+- **Exclude patterns** - Automatically skips `node_modules`, `vendor`, `.cache`, etc.
 - **Fast** - Written in Rust, SQLite-backed, sub-millisecond lookups
 
 ## Installation

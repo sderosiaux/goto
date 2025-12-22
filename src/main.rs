@@ -5,11 +5,14 @@ mod matcher;
 mod scanner;
 
 use anyhow::Result;
+use chrono::{Duration, Utc};
 use clap::Parser;
+use std::path::Path;
+use std::process::Command;
 
 use cli::{Cli, Commands, SortOrder};
 use config::Config;
-use db::{Database, ProjectSource};
+use db::{Database, Project, ProjectSource};
 use matcher::Matcher;
 use scanner::Scanner;
 
@@ -19,7 +22,11 @@ fn main() -> Result<()> {
     let mut db = Database::open()?;
 
     // If a query is provided without a subcommand, treat it as "find"
+    // Special case: "-" means show recent projects
     if let Some(query) = cli.query {
+        if query == "-" {
+            return show_recent(5, &config, &db);
+        }
         return find_project(&query, false, &config, &db);
     }
 
@@ -27,11 +34,17 @@ fn main() -> Result<()> {
         Some(Commands::Find { query, all }) => {
             find_project(&query, all, &config, &db)
         }
+        Some(Commands::Recent { limit }) => {
+            show_recent(limit, &config, &db)
+        }
+        Some(Commands::Stats) => {
+            show_stats(&db)
+        }
         Some(Commands::Scan { spotlight_only, paths_only }) => {
             scan_projects(spotlight_only, paths_only, &config, &mut db)
         }
-        Some(Commands::List { sort, limit }) => {
-            list_projects(sort, limit, &db)
+        Some(Commands::List { sort, limit, git }) => {
+            list_projects(sort, limit, git, &db)
         }
         Some(Commands::Add { path }) => {
             add_path(path, &mut Config::load()?)
@@ -51,6 +64,127 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Get git branch and dirty status for a project
+fn get_git_status(path: &Path) -> Option<(String, bool)> {
+    // Get current branch
+    let branch_output = Command::new("git")
+        .args(["-C", &path.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+
+    if !branch_output.status.success() {
+        return None;
+    }
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+
+    // Check if dirty (has uncommitted changes)
+    let status_output = Command::new("git")
+        .args(["-C", &path.to_string_lossy(), "status", "--porcelain"])
+        .output()
+        .ok()?;
+
+    let is_dirty = !status_output.stdout.is_empty();
+
+    Some((branch, is_dirty))
+}
+
+/// Show recently accessed projects
+fn show_recent(limit: usize, _config: &Config, db: &Database) -> Result<()> {
+    let mut projects = db.get_all_projects()?;
+
+    // Filter to only accessed projects and sort by recency
+    projects.retain(|p| p.access_count > 0);
+    projects.sort_by(|a, b| b.last_accessed.cmp(&a.last_accessed));
+
+    if projects.is_empty() {
+        eprintln!("\x1b[33m⚠\x1b[0m No recently accessed projects.");
+        eprintln!("  Use \x1b[1mgoto <query>\x1b[0m to navigate to a project first.");
+        return Ok(());
+    }
+
+    eprintln!("\x1b[36mRecent projects:\x1b[0m\n");
+
+    for (i, project) in projects.iter().take(limit).enumerate() {
+        let git_info = get_git_status(&project.path)
+            .map(|(branch, dirty)| {
+                let dirty_marker = if dirty { "*" } else { "" };
+                format!(" \x1b[33m{}{}\x1b[0m", branch, dirty_marker)
+            })
+            .unwrap_or_default();
+
+        eprintln!(
+            "  \x1b[33m{}.\x1b[0m \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
+            i + 1,
+            project.name,
+            git_info,
+            project.path.display()
+        );
+    }
+
+    eprintln!("\n\x1b[90mTip: goto <number> to navigate (e.g., goto 1)\x1b[0m");
+
+    // If user provides a number, navigate to that project
+    Ok(())
+}
+
+/// Show project access statistics
+fn show_stats(db: &Database) -> Result<()> {
+    let projects = db.get_all_projects()?;
+
+    if projects.is_empty() {
+        eprintln!("\x1b[31m✗\x1b[0m No projects indexed yet.");
+        return Ok(());
+    }
+
+    let total = projects.len();
+    let accessed: Vec<&Project> = projects.iter().filter(|p| p.access_count > 0).collect();
+    let total_accesses: i64 = projects.iter().map(|p| p.access_count).sum();
+
+    // Projects accessed in last 7 days
+    let week_ago = Utc::now() - Duration::days(7);
+    let active_this_week: Vec<&Project> = accessed.iter()
+        .filter(|p| p.last_accessed > week_ago)
+        .copied()
+        .collect();
+
+    // Top 5 most accessed
+    let mut by_access = projects.clone();
+    by_access.sort_by(|a, b| b.access_count.cmp(&a.access_count));
+
+    eprintln!("\x1b[36mProject Statistics\x1b[0m\n");
+    eprintln!("  \x1b[90mTotal indexed:\x1b[0m     {}", total);
+    eprintln!("  \x1b[90mEver accessed:\x1b[0m     {}", accessed.len());
+    eprintln!("  \x1b[90mActive this week:\x1b[0m  {}", active_this_week.len());
+    eprintln!("  \x1b[90mTotal navigations:\x1b[0m {}", total_accesses);
+
+    if !by_access.is_empty() && by_access[0].access_count > 0 {
+        eprintln!("\n\x1b[36mMost accessed:\x1b[0m\n");
+        for project in by_access.iter().take(5).filter(|p| p.access_count > 0) {
+            eprintln!(
+                "  \x1b[32m{:>3}x\x1b[0m \x1b[1m{}\x1b[0m",
+                project.access_count,
+                project.name
+            );
+        }
+    }
+
+    if !active_this_week.is_empty() {
+        eprintln!("\n\x1b[36mActive this week:\x1b[0m\n");
+        for project in active_this_week.iter().take(5) {
+            let days_ago = (Utc::now() - project.last_accessed).num_days();
+            let when = if days_ago == 0 { "today".to_string() } else { format!("{}d ago", days_ago) };
+            eprintln!(
+                "  \x1b[90m{:>6}\x1b[0m \x1b[1m{}\x1b[0m",
+                when,
+                project.name
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn find_project(query: &str, show_all: bool, config: &Config, db: &Database) -> Result<()> {
@@ -131,7 +265,7 @@ fn scan_projects(spotlight_only: bool, paths_only: bool, config: &Config, db: &m
     Ok(())
 }
 
-fn list_projects(sort: SortOrder, limit: usize, db: &Database) -> Result<()> {
+fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -> Result<()> {
     let mut projects = db.get_all_projects()?;
 
     match sort {
@@ -169,13 +303,25 @@ fn list_projects(sort: SortOrder, limit: usize, db: &Database) -> Result<()> {
         let frecency = project.frecency_score();
         let frecency_color = if frecency > 50.0 { "32" } else { "90" };
 
+        let git_info = if show_git {
+            get_git_status(&project.path)
+                .map(|(branch, dirty)| {
+                    let dirty_marker = if dirty { "\x1b[31m*\x1b[0m" } else { "" };
+                    format!(" \x1b[33m{}\x1b[0m{}", branch, dirty_marker)
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         println!(
-            "  \x1b[{}m[{}]\x1b[0m \x1b[{}m{:>5.0}\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m{}\x1b[0m",
+            "  \x1b[{}m[{}]\x1b[0m \x1b[{}m{:>5.0}\x1b[0m \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
             source_color,
             source_badge,
             frecency_color,
             frecency,
             project.name,
+            git_info,
             project.path.display()
         );
     }

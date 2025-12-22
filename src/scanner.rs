@@ -65,6 +65,8 @@ impl<'a> Scanner<'a> {
             return Ok(0);
         }
 
+        let exclude_patterns = &self.config.exclude_patterns;
+
         // Collect all project paths first
         let mut projects_to_add = Vec::new();
 
@@ -73,9 +75,13 @@ impl<'a> Scanner<'a> {
             .follow_links(false)
             .into_iter()
             .filter_entry(|e| {
-                // Skip hidden directories (except .git which we're looking for)
                 let name = e.file_name().to_string_lossy();
-                !name.starts_with('.') || name == ".git"
+                // Skip hidden directories (except .git which we're looking for)
+                if name.starts_with('.') && name != ".git" {
+                    return false;
+                }
+                // Skip excluded patterns
+                !exclude_patterns.iter().any(|p| name.contains(p))
             })
         {
             let entry = match entry {
@@ -169,15 +175,9 @@ impl<'a> Scanner<'a> {
                         continue;
                     }
 
-                    // Skip if it's in common non-project directories
+                    // Skip if path matches any exclude pattern
                     let path_str = project_dir.to_string_lossy();
-                    if path_str.contains("node_modules")
-                        || path_str.contains(".cargo")
-                        || path_str.contains("Library/")
-                        || path_str.contains(".Trash")
-                        || path_str.contains("/vendor/")
-                        || path_str.contains("/.cache/")
-                    {
+                    if self.config.exclude_patterns.iter().any(|p| path_str.contains(p)) {
                         continue;
                     }
 

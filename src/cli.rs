@@ -26,6 +26,16 @@ pub enum Commands {
         all: bool,
     },
 
+    /// Show recently accessed projects (shortcut: goto -)
+    Recent {
+        /// Number of recent projects to show
+        #[arg(short, long, default_value = "5")]
+        limit: usize,
+    },
+
+    /// Show project access statistics
+    Stats,
+
     /// Scan and index projects from configured paths and Spotlight
     Scan {
         /// Only scan Spotlight, skip configured paths
@@ -46,6 +56,10 @@ pub enum Commands {
         /// Maximum number of projects to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
+
+        /// Show git branch and dirty status
+        #[arg(short, long, default_value = "true")]
+        git: bool,
     },
 
     /// Add a path to the configuration

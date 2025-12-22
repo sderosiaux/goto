@@ -24,6 +24,10 @@ pub struct Config {
     /// Command to run after navigating (e.g., "claude")
     #[serde(default)]
     pub post_command: Option<String>,
+
+    /// Path patterns to exclude (e.g., node_modules, vendor)
+    #[serde(default = "default_exclude_patterns")]
+    pub exclude_patterns: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -42,6 +46,27 @@ fn default_spotlight_paths() -> Vec<PathBuf> {
     }
 }
 
+fn default_exclude_patterns() -> Vec<String> {
+    vec![
+        "node_modules".to_string(),
+        ".cargo".to_string(),
+        "vendor".to_string(),
+        ".cache".to_string(),
+        ".Trash".to_string(),
+        "Library/".to_string(),
+        "target/debug".to_string(),
+        "target/release".to_string(),
+        ".npm".to_string(),
+        ".pnpm".to_string(),
+        "dist/".to_string(),
+        "build/".to_string(),
+        ".next".to_string(),
+        "__pycache__".to_string(),
+        ".venv".to_string(),
+        "venv/".to_string(),
+    ]
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -50,6 +75,7 @@ impl Default for Config {
             spotlight_paths: default_spotlight_paths(),
             max_depth: 5,
             post_command: Some("claude".to_string()),
+            exclude_patterns: default_exclude_patterns(),
         }
     }
 }
