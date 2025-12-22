@@ -1,0 +1,37 @@
+[package]
+name = "goto"
+version = "0.1.0"
+edition = "2021"
+description = "Quickly navigate to recent projects with fuzzy matching"
+authors = ["sderosiaux"]
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Fuzzy matching
+fuzzy-matcher = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# File system
+walkdir = "2"
+directories = "5"
+dirs = "5"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
