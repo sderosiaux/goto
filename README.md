@@ -1,6 +1,6 @@
 # goto
 
-Fast project navigation with fuzzy + semantic search. Jump to any project instantly.
+Fast project navigation with semantic search. Jump to any project instantly.
 
 ## Why?
 
@@ -17,20 +17,20 @@ cd ~/code/work/team/some-project-i-forgot-the-exact-name
 ```bash
 goto docs          # → /Users/you/code/documentation
 goto api           # → /Users/you/projects/backend-api
-goto "hotel app"   # → /Users/you/work/reservo (semantic match!)
+goto "cache rust"  # → /Users/you/code/foyer (semantic match!)
 ```
 
 ## What it does
 
-- **Fuzzy matching** - Type partial names, it finds the best match
-- **Semantic search** - Find projects by concept, not just folder name
+- **Semantic search** - Find projects by concept, not just folder name (powered by local embeddings)
+- **Smart ranking** - Projects with matching names get boosted to the top
 - **Recent list** - `goto -` shows your last accessed projects
-- **Fast** - Sub-millisecond lookups
+- **Fast** - Exact name matches are instant, semantic search uses local ML model
 
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/goto.git
+git clone https://github.com/sderosiaux/goto.git
 cd goto && ./install.sh
 ```
 
@@ -43,18 +43,49 @@ Then restart your terminal.
 goto add ~/code
 goto add ~/projects
 
-# Scan and index projects
+# Scan and index projects (downloads ~80MB model on first run)
 goto update
 
 # Jump to projects
 goto myproject
 
 # See all matches
-goto myproject -a
+goto -a myproject
+
+# See more matches
+goto -a -n 30 myproject
 
 # Show recent
 goto -
+
+# Run ranking tests
+goto test
 ```
+
+## Testing & Tuning
+
+Create `~/Library/Application Support/goto/tests.toml` to define expected ranking:
+
+```toml
+[[tests]]
+query = "cache rust"
+expected = ["foyer"]
+top_n = 3
+
+[[tests]]
+query = "kafka"
+expected = ["kafka", "kafka-streams"]
+top_n = 5
+```
+
+Run `goto test` to validate. Iterate until your expectations are met.
+
+## How it works
+
+1. **Indexing**: Extracts metadata from each project (description, README excerpt, tech stack, keywords)
+2. **Embedding**: Uses `MultilingualE5Small` model (384-dim vectors) to embed project descriptions
+3. **Search**: Query is embedded and compared via cosine similarity
+4. **Boosting**: Projects with names containing the query get +20% score boost
 
 ## License
 
