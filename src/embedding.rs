@@ -22,21 +22,27 @@ static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 /// Initialize the embedding model (downloads on first use ~80MB)
 fn init_model() -> Result<TextEmbedding> {
     let debug = DEBUG.load(Ordering::Relaxed);
-    if debug {
-        eprintln!("\x1b[36m⏳\x1b[0m Loading embedding model...");
-    }
+
+    // Always show loading indicator (model load takes 1-10s depending on OS cache)
+    eprintln!("\x1b[36m⏳\x1b[0m Loading semantic model...");
 
     // Use centralized cache directory instead of current working directory
     let cache_dir = Config::model_cache_dir()?;
     std::fs::create_dir_all(&cache_dir)
         .with_context(|| format!("Failed to create cache directory: {}", cache_dir.display()))?;
 
-    TextEmbedding::try_new(
+    let result = TextEmbedding::try_new(
         InitOptions::new(EmbeddingModel::MultilingualE5Small)
             .with_cache_dir(cache_dir)
             .with_show_download_progress(debug),
     )
-    .context("Failed to initialize embedding model")
+    .context("Failed to initialize embedding model");
+
+    if result.is_ok() && debug {
+        eprintln!("\x1b[32m✓\x1b[0m Model loaded");
+    }
+
+    result
 }
 
 /// Generate embedding for a single text
