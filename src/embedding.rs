@@ -25,16 +25,29 @@ static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 /// Spinner frames for loading animation (braille pattern - smooth and modern)
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Start a spinner animation in a background thread
+/// Delay before showing spinner (don't show for fast loads)
+const SPINNER_DELAY_MS: u64 = 300;
+
+/// Start a spinner animation in a background thread (shows after delay)
 fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
     let msg = message.to_string();
 
     let handle = thread::spawn(move || {
+        // Wait before showing spinner (skip for fast loads)
+        thread::sleep(Duration::from_millis(SPINNER_DELAY_MS));
+
+        if stop_clone.load(Ordering::Relaxed) {
+            return; // Already done, don't show anything
+        }
+
         let mut i = 0;
         let mut stderr = std::io::stderr();
+        let mut showed_spinner = false;
+
         while !stop_clone.load(Ordering::Relaxed) {
+            showed_spinner = true;
             let frame = SPINNER[i % SPINNER.len()];
             // \x1b[2K clears line, \r returns to start
             let _ = write!(stderr, "\r\x1b[2K\x1b[36m{}\x1b[0m {}", frame, msg);
@@ -42,9 +55,12 @@ fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
             i += 1;
             thread::sleep(Duration::from_millis(80));
         }
-        // Clear the spinner line
-        let _ = write!(stderr, "\r\x1b[2K");
-        let _ = stderr.flush();
+
+        // Clear the spinner line only if we showed it
+        if showed_spinner {
+            let _ = write!(stderr, "\r\x1b[2K");
+            let _ = stderr.flush();
+        }
     });
 
     (stop, handle)
@@ -54,7 +70,7 @@ fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
 fn init_model() -> Result<TextEmbedding> {
     let debug = DEBUG.load(Ordering::Relaxed);
 
-    // Start spinner animation
+    // Start spinner animation (shows after 300ms delay)
     let (stop, handle) = start_spinner("Loading semantic model...");
 
     // Use centralized cache directory instead of current working directory
