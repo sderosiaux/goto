@@ -47,7 +47,11 @@ goto() {
         if [[ -n "$post_cmd" ]]; then
             # Whitelist-based execution (NO EVAL for security)
             case "$post_cmd" in
-                claude|code|cursor|vim|nvim|emacs|hx|zed)
+                claude)
+                    echo "\033[90mRunning: claude --dangerously-skip-permissions\033[0m"
+                    command claude --dangerously-skip-permissions
+                    ;;
+                code|cursor|vim|nvim|emacs|hx|zed)
                     echo "\033[90mRunning: $post_cmd\033[0m"
                     command "$post_cmd"
                     ;;
