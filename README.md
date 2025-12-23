@@ -64,10 +64,83 @@ goto test
 
 ## How it works
 
-1. **Indexing**: Extracts metadata from each project (description, README excerpt, tech stack, keywords)
-2. **Embedding**: Uses `MultilingualE5Small` model (384-dim vectors) to embed project descriptions
-3. **Search**: Query is embedded and compared via cosine similarity
-4. **Boosting**: Projects with names containing the query get +20% score boost
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              INDEXING PHASE                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ~/code/myproject/
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          METADATA EXTRACTION                                │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │ package.json │  │  README.md   │  │ Cargo.toml   │  │  src/*.rs    │    │
+│  │ Cargo.toml   │  │  (excerpt)   │  │ package.json │  │  src/*.ts    │    │
+│  │ pyproject    │  │              │  │ (tech stack) │  │  (types)     │    │
+│  │ (description)│  │              │  │              │  │              │    │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
+│         │                 │                 │                 │            │
+│         ▼                 ▼                 ▼                 ▼            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │         Combined Text: "myproject | Fast cache library |             │  │
+│  │         Rust, async | Technologies: Rust | Type: backend |          │  │
+│  │         Structure: cache, storage | Types: CacheManager, LruCache"  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────┐
+                    │   MultilingualE5Small Model     │
+                    │       (384-dim vectors)         │
+                    └─────────────────────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────┐
+                    │   SQLite + sqlite-vec           │
+                    │   (vector storage & search)     │
+                    └─────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                               SEARCH PHASE                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     "cache rust"
+          │
+          ▼
+   ┌──────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+   │  Embed Query │  ──▶ │ L2 Distance Search  │  ──▶ │   Apply Boosting    │
+   │   (384-dim)  │      │   (sqlite-vec)      │      │                     │
+   └──────────────┘      └─────────────────────┘      │  +20 name match     │
+                                                      │  +10 metadata match │
+                                                      └─────────────────────┘
+                                                                 │
+                                                                 ▼
+                                                      ┌─────────────────────┐
+                                                      │   Ranked Results    │
+                                                      │                     │
+                                                      │  1. foyer      (92) │
+                                                      │  2. redis-cli  (78) │
+                                                      │  3. cache-lib  (71) │
+                                                      └─────────────────────┘
+```
+
+### Metadata Sources
+
+| Source | Data Extracted |
+|--------|----------------|
+| `package.json` / `Cargo.toml` / `pyproject.toml` | Description, keywords |
+| `README.md` | First meaningful paragraph (up to 1500 chars) |
+| Build files | Tech stack detection (40+ frameworks/languages) |
+| Directory structure | Semantic folder names (filtered) |
+| Source files (top 10 by size) | Type/class/interface names |
+
+### Boosting Rules
+
+- **+20 points**: All query words found in project name
+- **+10 points**: Query words found in embedded metadata text
 
 ## License
 
