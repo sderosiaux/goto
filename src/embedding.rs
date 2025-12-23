@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use crate::config::Config;
 
@@ -19,12 +22,40 @@ pub fn set_debug(enabled: bool) {
 /// Global embedding model instance (lazy-loaded, wrapped in Mutex for mutability)
 static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 
+/// Spinner frames for loading animation (braille pattern - smooth and modern)
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Start a spinner animation in a background thread
+fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = Arc::clone(&stop);
+    let msg = message.to_string();
+
+    let handle = thread::spawn(move || {
+        let mut i = 0;
+        let mut stderr = std::io::stderr();
+        while !stop_clone.load(Ordering::Relaxed) {
+            let frame = SPINNER[i % SPINNER.len()];
+            // \x1b[2K clears line, \r returns to start
+            let _ = write!(stderr, "\r\x1b[2K\x1b[36m{}\x1b[0m {}", frame, msg);
+            let _ = stderr.flush();
+            i += 1;
+            thread::sleep(Duration::from_millis(80));
+        }
+        // Clear the spinner line
+        let _ = write!(stderr, "\r\x1b[2K");
+        let _ = stderr.flush();
+    });
+
+    (stop, handle)
+}
+
 /// Initialize the embedding model (downloads on first use ~80MB)
 fn init_model() -> Result<TextEmbedding> {
     let debug = DEBUG.load(Ordering::Relaxed);
 
-    // Always show loading indicator (model load takes 1-10s depending on OS cache)
-    eprintln!("\x1b[36m⏳\x1b[0m Loading semantic model...");
+    // Start spinner animation
+    let (stop, handle) = start_spinner("Loading semantic model...");
 
     // Use centralized cache directory instead of current working directory
     let cache_dir = Config::model_cache_dir()?;
@@ -38,9 +69,9 @@ fn init_model() -> Result<TextEmbedding> {
     )
     .context("Failed to initialize embedding model");
 
-    if result.is_ok() && debug {
-        eprintln!("\x1b[32m✓\x1b[0m Model loaded");
-    }
+    // Stop spinner
+    stop.store(true, Ordering::Relaxed);
+    let _ = handle.join();
 
     result
 }
