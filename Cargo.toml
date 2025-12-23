@@ -2,7 +2,7 @@
 name = "goto"
 version = "0.1.0"
 edition = "2021"
-description = "Quickly navigate to recent projects with fuzzy matching"
+description = "Quickly navigate to projects with semantic search"
 authors = ["sderosiaux"]
 
 [dependencies]
@@ -12,8 +12,12 @@ clap = { version = "4", features = ["derive"] }
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# Fuzzy matching
-fuzzy-matcher = "0.3"
+# Vector search (sqlite-vec extension)
+sqlite-vec = "0.1"
+zerocopy = { version = "0.7", features = ["derive"] }
+
+# Embeddings (ONNX-based, offline)
+fastembed = "5"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

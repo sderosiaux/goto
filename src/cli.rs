@@ -3,30 +3,32 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "goto")]
-#[command(about = "Quickly navigate to recent projects with fuzzy matching")]
+#[command(about = "Quickly navigate to projects with fuzzy + semantic search")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Search query (shortcut for `goto find <query>`)
-    #[arg(value_name = "QUERY")]
-    pub query: Option<String>,
+    /// Search query (fuzzy + semantic search)
+    #[arg(value_name = "QUERY", trailing_var_arg = true)]
+    pub query: Vec<String>,
+
+    /// Show all matches instead of just the best one
+    #[arg(short, long)]
+    pub all: bool,
+
+    /// Number of results to show (with -a)
+    #[arg(short = 'n', long, default_value = "10")]
+    pub limit: usize,
+
+    /// Show debug information
+    #[arg(long)]
+    pub debug: bool,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Find and go to a project matching the query
-    Find {
-        /// Search query (fuzzy matched against project names and paths)
-        query: String,
-
-        /// Show all matches instead of just the best one
-        #[arg(short, long)]
-        all: bool,
-    },
-
-    /// Show recently accessed projects (shortcut: goto -)
+    /// Show recently accessed projects
     Recent {
         /// Number of recent projects to show
         #[arg(short, long, default_value = "5")]
@@ -36,15 +38,11 @@ pub enum Commands {
     /// Show project access statistics
     Stats,
 
-    /// Scan and index projects from configured paths and Spotlight
-    Scan {
-        /// Only scan Spotlight, skip configured paths
-        #[arg(long)]
-        spotlight_only: bool,
-
-        /// Only scan configured paths, skip Spotlight
-        #[arg(long)]
-        paths_only: bool,
+    /// Scan directories and index projects for semantic search
+    Update {
+        /// Re-index all projects (clear existing embeddings first)
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// List all indexed projects
@@ -53,9 +51,13 @@ pub enum Commands {
         #[arg(short, long, default_value = "frecency")]
         sort: SortOrder,
 
-        /// Maximum number of projects to show
+        /// Maximum number of projects to show (ignored if --all)
         #[arg(short, long, default_value = "20")]
         limit: usize,
+
+        /// Show all projects (no limit)
+        #[arg(short, long)]
+        all: bool,
 
         /// Show git branch and dirty status
         #[arg(short, long, default_value = "true")]
@@ -77,8 +79,8 @@ pub enum Commands {
     /// Show current configuration
     Config,
 
-    /// Clear the cache and re-scan
-    Refresh,
+    /// Run ranking tests from ~/.config/goto/tests.toml
+    Test,
 }
 
 #[derive(Clone, Debug, Default)]

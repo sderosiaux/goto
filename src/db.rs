@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension, Transaction};
+use sqlite_vec::sqlite3_vec_init;
 use std::path::PathBuf;
+use zerocopy::AsBytes;
 
 use crate::config::Config;
+use crate::embedding::EMBEDDING_DIM;
 
 #[derive(Debug, Clone)]
 pub struct Project {
@@ -11,6 +14,7 @@ pub struct Project {
     pub name: String,
     pub last_accessed: DateTime<Utc>,
     pub access_count: i64,
+    #[allow(dead_code)]
     pub source: ProjectSource,
 }
 
@@ -67,6 +71,11 @@ pub struct Database {
 
 impl Database {
     pub fn open() -> Result<Self> {
+        // Initialize sqlite-vec extension (must be done before opening connection)
+        unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+        }
+
         let db_path = Config::db_path()?;
 
         if let Some(parent) = db_path.parent() {
@@ -105,8 +114,31 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
             CREATE INDEX IF NOT EXISTS idx_projects_last_accessed ON projects(last_accessed DESC);
             CREATE INDEX IF NOT EXISTS idx_projects_frecency ON projects(access_count DESC, last_accessed DESC);
+
+            -- Semantic metadata for projects
+            CREATE TABLE IF NOT EXISTS project_metadata (
+                project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                description TEXT,
+                readme_excerpt TEXT,
+                embedded_text TEXT,
+                last_indexed TEXT
+            );
             "
         )?;
+
+        // Create vector table for embeddings (vec0 virtual table)
+        // This needs to be done separately as virtual tables have special syntax
+        self.conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS project_embeddings USING vec0(
+                    project_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[{}]
+                )",
+                EMBEDDING_DIM
+            ),
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -189,12 +221,6 @@ impl Database {
         projects.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Clear all projects from the database
-    pub fn clear(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM projects", [])?;
-        Ok(())
-    }
-
     /// Remove projects that no longer exist on disk - BATCH DELETE (fixed N+1)
     pub fn prune_missing(&mut self) -> Result<usize> {
         // Get only IDs and paths (lighter than full Project)
@@ -231,4 +257,126 @@ impl Database {
         Ok(missing_ids.len())
     }
 
+    // ========== Semantic Search Methods ==========
+
+    /// Store or update project metadata
+    pub fn upsert_metadata(
+        &self,
+        project_id: i64,
+        description: Option<&str>,
+        readme_excerpt: Option<&str>,
+        embedded_text: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO project_metadata (project_id, description, readme_excerpt, embedded_text, last_indexed)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(project_id) DO UPDATE SET
+                 description = ?2,
+                 readme_excerpt = ?3,
+                 embedded_text = ?4,
+                 last_indexed = ?5",
+            params![project_id, description, readme_excerpt, embedded_text, now],
+        )?;
+        Ok(())
+    }
+
+    /// Store embedding for a project
+    pub fn upsert_embedding(&self, project_id: i64, embedding: &[f32]) -> Result<()> {
+        // Delete existing embedding if any
+        self.conn.execute(
+            "DELETE FROM project_embeddings WHERE project_id = ?",
+            [project_id],
+        )?;
+
+        // Insert new embedding
+        self.conn.execute(
+            "INSERT INTO project_embeddings (project_id, embedding) VALUES (?, ?)",
+            params![project_id, embedding.as_bytes()],
+        )?;
+        Ok(())
+    }
+
+    /// Find most similar projects to a query embedding
+    /// Returns (project_id, distance) pairs sorted by similarity (lower distance = more similar)
+    pub fn find_similar(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<(i64, f32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT project_id, distance
+             FROM project_embeddings
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?",
+        )?;
+
+        let results = stmt.query_map(params![query_embedding.as_bytes(), limit as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, f32>(1)?))
+        })?;
+
+        results.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Get projects that don't have embeddings yet
+    pub fn get_unindexed_projects(&self) -> Result<Vec<(i64, PathBuf, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.path, p.name
+             FROM projects p
+             LEFT JOIN project_embeddings e ON p.id = e.project_id
+             WHERE e.project_id IS NULL",
+        )?;
+
+        let results = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                PathBuf::from(row.get::<_, String>(1)?),
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+
+        results.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Get project by ID
+    pub fn get_project_by_id(&self, id: i64) -> Result<Option<Project>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, name, last_accessed, access_count, source FROM projects WHERE id = ?",
+        )?;
+
+        let result = stmt
+            .query_row([id], |row| {
+                Ok(Project {
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    name: row.get(1)?,
+                    last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    access_count: row.get(3)?,
+                    source: row.get::<_, String>(4)?
+                        .parse()
+                        .unwrap_or(ProjectSource::Scan),
+                })
+            })
+            .optional()?;
+
+        Ok(result)
+    }
+
+    /// Clear all embeddings (for re-indexing)
+    pub fn clear_embeddings(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM project_embeddings", [])?;
+        self.conn.execute("DELETE FROM project_metadata", [])?;
+        Ok(())
+    }
+
+    /// Get embedding statistics
+    pub fn embedding_stats(&self) -> Result<(usize, usize)> {
+        let total: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))?;
+        let indexed: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM project_embeddings",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((indexed, total))
+    }
 }

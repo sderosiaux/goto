@@ -51,14 +51,6 @@ impl<'a> Scanner<'a> {
         Ok(result)
     }
 
-    /// Scan only via Spotlight
-    pub fn scan_spotlight_only(&mut self) -> Result<ScanResult> {
-        let mut result = ScanResult::default();
-        result.from_spotlight = self.scan_spotlight()?;
-        result.pruned = self.db.prune_missing()?;
-        Ok(result)
-    }
-
     /// Scan a directory for git repositories
     fn scan_directory(&mut self, base_path: &PathBuf) -> Result<usize> {
         if !base_path.exists() {

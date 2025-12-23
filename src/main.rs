@@ -1,8 +1,9 @@
 mod cli;
 mod config;
 mod db;
-mod matcher;
+mod embedding;
 mod scanner;
+mod semantic;
 
 use anyhow::Result;
 use chrono::{Duration, Utc};
@@ -12,39 +13,38 @@ use std::process::Command;
 
 use cli::{Cli, Commands, SortOrder};
 use config::Config;
-use db::{Database, Project, ProjectSource};
-use matcher::Matcher;
+use db::{Database, Project};
 use scanner::Scanner;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    embedding::set_debug(cli.debug);
     let config = Config::load()?;
     let mut db = Database::open()?;
 
-    // If a query is provided without a subcommand, treat it as "find"
+    // If a query is provided, search for it
     // Special case: "-" means show recent projects
-    if let Some(query) = cli.query {
+    if !cli.query.is_empty() {
+        let query = cli.query.join(" ");
         if query == "-" {
             return show_recent(5, &config, &db);
         }
-        return find_project(&query, false, &config, &db);
+        return find_project(&query, cli.all, cli.limit, &config, &db);
     }
 
     match cli.command {
-        Some(Commands::Find { query, all }) => {
-            find_project(&query, all, &config, &db)
-        }
         Some(Commands::Recent { limit }) => {
             show_recent(limit, &config, &db)
         }
         Some(Commands::Stats) => {
             show_stats(&db)
         }
-        Some(Commands::Scan { spotlight_only, paths_only }) => {
-            scan_projects(spotlight_only, paths_only, &config, &mut db)
+        Some(Commands::Update { force }) => {
+            update_all(force, &config, &mut db)
         }
-        Some(Commands::List { sort, limit, git }) => {
-            list_projects(sort, limit, git, &db)
+        Some(Commands::List { sort, limit, all, git }) => {
+            let actual_limit = if all { usize::MAX } else { limit };
+            list_projects(sort, actual_limit, git, &db)
         }
         Some(Commands::Add { path }) => {
             add_path(path, &mut Config::load()?)
@@ -55,8 +55,8 @@ fn main() -> Result<()> {
         Some(Commands::Config) => {
             show_config(&config)
         }
-        Some(Commands::Refresh) => {
-            refresh(&config, &mut db)
+        Some(Commands::Test) => {
+            run_tests(&db)
         }
         None => {
             // No command and no query - show help hint
@@ -187,7 +187,13 @@ fn show_stats(db: &Database) -> Result<()> {
     Ok(())
 }
 
-fn find_project(query: &str, show_all: bool, config: &Config, db: &Database) -> Result<()> {
+/// Minimum semantic score to accept a match (below this = no match)
+const SEMANTIC_MIN_THRESHOLD: f64 = 55.0;
+
+/// Boost score if project name contains query
+const SUBSTRING_BOOST: f32 = 20.0;
+
+fn find_project(query: &str, show_all: bool, limit: usize, config: &Config, db: &Database) -> Result<()> {
     let projects = db.get_all_projects()?;
 
     if projects.is_empty() {
@@ -196,60 +202,275 @@ fn find_project(query: &str, show_all: bool, config: &Config, db: &Database) -> 
         std::process::exit(1);
     }
 
-    let matcher = Matcher::new();
-    let matches = matcher.find_matches(query, &projects);
-
-    if matches.is_empty() {
-        eprintln!("\x1b[31m✗\x1b[0m No projects matching '\x1b[1m{query}\x1b[0m'");
-        eprintln!("  Try a different query or run \x1b[1mgoto list\x1b[0m to see all projects.");
-        std::process::exit(1);
+    // If show_all, just display semantic matches
+    if show_all {
+        return show_all_matches(query, limit, db);
     }
 
-    if show_all {
-        // Show all matches for the user to choose
-        eprintln!("\x1b[36mMatches for '\x1b[1m{query}\x1b[0m\x1b[36m':\x1b[0m");
-        for (i, m) in matches.iter().take(10).enumerate() {
-            let score_color = if m.fuzzy_score > 80 { "32" } else { "90" };
-            eprintln!(
-                "  \x1b[33m{:>2}.\x1b[0m \x1b[1m{}\x1b[0m \x1b[{}m({})\x1b[0m",
-                i + 1,
-                m.project.path.display(),
-                score_color,
-                m.fuzzy_score
-            );
-        }
-    } else {
-        // Output the best match path - this will be captured by the shell function
-        let best = &matches[0];
-
-        // Mark as accessed
-        db.mark_accessed(&best.project.path)?;
-
-        // Output path for the shell function to cd to
-        println!("{}", best.project.path.display());
-
-        // Output post command if configured (on stderr so it doesn't interfere with path)
+    // Step 1: Check for exact name match (fast path)
+    let query_lower = query.to_lowercase();
+    if let Some(exact) = projects.iter().find(|p| p.name.to_lowercase() == query_lower) {
+        db.mark_accessed(&exact.path)?;
+        println!("{}", exact.path.display());
         if let Some(cmd) = &config.post_command {
             eprintln!("__GOTO_POST_CMD__:{}", cmd);
+        }
+        return Ok(());
+    }
+
+    // Step 2: Use semantic search
+    let best_project = find_best_match(query, &projects, db)?;
+
+    match best_project {
+        Some((project, score, is_semantic)) => {
+            // Mark as accessed
+            db.mark_accessed(&project.path)?;
+
+            // Output path for the shell function to cd to
+            println!("{}", project.path.display());
+
+            // Show match info on stderr (doesn't interfere with path)
+            if is_semantic {
+                eprintln!(
+                    "\x1b[35m◆\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m(semantic: {:.0}%)\x1b[0m",
+                    project.name, score
+                );
+            }
+
+            // Output post command if configured
+            if let Some(cmd) = &config.post_command {
+                eprintln!("__GOTO_POST_CMD__:{}", cmd);
+            }
+        }
+        None => {
+            eprintln!("\x1b[31m✗\x1b[0m No projects matching '\x1b[1m{query}\x1b[0m'");
+            eprintln!("  Try a different query or run \x1b[1mgoto list\x1b[0m to see all projects.");
+            std::process::exit(1);
         }
     }
 
     Ok(())
 }
 
-fn scan_projects(spotlight_only: bool, paths_only: bool, config: &Config, db: &mut Database) -> Result<()> {
-    let mut scanner = Scanner::new(config, db);
+/// Find the best match using semantic search with substring boost
+fn find_best_match(
+    query: &str,
+    _projects: &[Project],
+    db: &Database,
+) -> Result<Option<(Project, f64, bool)>> {
+    let (indexed, _) = db.embedding_stats()?;
+    if indexed == 0 {
+        return Ok(None);
+    }
 
-    let result = if spotlight_only {
-        eprintln!("\x1b[36m⏳\x1b[0m Scanning via Spotlight...");
-        scanner.scan_spotlight_only()?
-    } else if paths_only {
-        eprintln!("\x1b[36m⏳\x1b[0m Scanning configured paths...");
-        scanner.scan_paths_only()?
+    // Get more results to find substring matches
+    if let Ok(results) = semantic::semantic_search(db, query, 10) {
+        let query_lower = query.to_lowercase();
+
+        // Apply substring boost and find best
+        let best = results
+            .into_iter()
+            .map(|(project, score)| {
+                let name_lower = project.name.to_lowercase();
+                let boosted = if name_lower.contains(&query_lower) {
+                    (score + SUBSTRING_BOOST).min(100.0)
+                } else {
+                    score
+                };
+                (project, boosted)
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((project, score)) = best {
+            if score as f64 >= SEMANTIC_MIN_THRESHOLD {
+                return Ok(Some((project, score as f64, true)));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Show semantic search results with substring boost
+fn show_all_matches(query: &str, limit: usize, db: &Database) -> Result<()> {
+    let (indexed, _) = db.embedding_stats()?;
+    if indexed == 0 {
+        eprintln!("\x1b[31m✗\x1b[0m No projects indexed for semantic search.");
+        eprintln!("  Run \x1b[1mgoto update\x1b[0m to index projects.");
+        std::process::exit(1);
+    }
+
+    // Fetch more than needed to allow for boosting reordering
+    let fetch_limit = (limit * 2).max(20);
+    if let Ok(results) = semantic::semantic_search(db, query, fetch_limit) {
+        let query_lower = query.to_lowercase();
+
+        // Boost scores for substring matches and re-sort
+        let mut boosted: Vec<_> = results
+            .into_iter()
+            .map(|(project, score)| {
+                let name_lower = project.name.to_lowercase();
+                let boosted_score = if name_lower.contains(&query_lower) {
+                    (score + SUBSTRING_BOOST).min(100.0)
+                } else {
+                    score
+                };
+                (project, boosted_score)
+            })
+            .collect();
+
+        boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (i, (project, score)) in boosted.iter().take(limit).enumerate() {
+            eprintln!(
+                "\x1b[35m{}.\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m({:.0}%)\x1b[0m",
+                i + 1,
+                project.name,
+                score
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Test case structure
+#[derive(Debug, serde::Deserialize)]
+struct TestCase {
+    query: String,
+    expected: Vec<String>,
+    #[serde(default = "default_top_n")]
+    top_n: usize,
+}
+
+fn default_top_n() -> usize { 3 }
+
+#[derive(Debug, serde::Deserialize)]
+struct TestFile {
+    tests: Vec<TestCase>,
+}
+
+/// Run ranking tests from config file
+fn run_tests(db: &Database) -> Result<()> {
+    let config_dir = directories::ProjectDirs::from("", "", "goto")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config/goto"));
+
+    let test_file = config_dir.join("tests.toml");
+
+    if !test_file.exists() {
+        // Create example test file
+        let example = r#"# Ranking tests - run with: goto test
+# Each test checks if expected projects appear in top N results
+
+[[tests]]
+query = "console"
+expected = ["console-plus-web", "console-plus-web-2"]
+top_n = 3
+
+[[tests]]
+query = "cache en rust"
+expected = ["foyer"]
+top_n = 3
+
+[[tests]]
+query = "kafka"
+expected = ["kafka", "apache-kafka-2"]
+top_n = 5
+"#;
+        std::fs::create_dir_all(&config_dir)?;
+        std::fs::write(&test_file, example)?;
+        eprintln!("\x1b[32m✓\x1b[0m Created example test file: {}", test_file.display());
+        eprintln!("  Edit it and run \x1b[1mgoto test\x1b[0m again");
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&test_file)?;
+    let tests: TestFile = toml::from_str(&content)?;
+
+    let (indexed, _) = db.embedding_stats()?;
+    if indexed == 0 {
+        eprintln!("\x1b[31m✗\x1b[0m No projects indexed. Run \x1b[1mgoto update\x1b[0m first.");
+        std::process::exit(1);
+    }
+
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for test in &tests.tests {
+        // Run semantic search with substring boost
+        let results = semantic::semantic_search(db, &test.query, 20)?;
+        let query_lower = test.query.to_lowercase();
+
+        let mut boosted: Vec<_> = results
+            .into_iter()
+            .map(|(project, score)| {
+                let name_lower = project.name.to_lowercase();
+                let boosted_score = if name_lower.contains(&query_lower) {
+                    (score + SUBSTRING_BOOST).min(100.0)
+                } else {
+                    score
+                };
+                (project, boosted_score)
+            })
+            .collect();
+
+        boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let top_names: Vec<_> = boosted.iter().take(test.top_n).map(|(p, _)| &p.name).collect();
+
+        // Check if any expected result is in top N (exact match)
+        let mut found: Vec<&str> = vec![];
+        let mut missing: Vec<&str> = vec![];
+
+        for exp in &test.expected {
+            if top_names.iter().any(|n| *n == exp) {
+                found.push(exp);
+            } else {
+                missing.push(exp);
+            }
+        }
+
+        if missing.is_empty() {
+            passed += 1;
+            eprintln!(
+                "\x1b[32m✓\x1b[0m \"{}\" → {} \x1b[90m(found: {})\x1b[0m",
+                test.query,
+                top_names.first().map(|s| s.as_str()).unwrap_or("?"),
+                found.join(", ")
+            );
+        } else {
+            failed += 1;
+            eprintln!(
+                "\x1b[31m✗\x1b[0m \"{}\" → {} \x1b[90m(missing: {})\x1b[0m",
+                test.query,
+                top_names.first().map(|s| s.as_str()).unwrap_or("?"),
+                missing.join(", ")
+            );
+            // Show actual top results
+            for (i, (p, score)) in boosted.iter().take(test.top_n).enumerate() {
+                eprintln!("    {}. {} ({:.0}%)", i + 1, p.name, score);
+            }
+        }
+    }
+
+    eprintln!();
+    if failed == 0 {
+        eprintln!("\x1b[32m✓ All {} tests passed\x1b[0m", passed);
     } else {
-        eprintln!("\x1b[36m⏳\x1b[0m Scanning all sources...");
-        scanner.scan_all()?
-    };
+        eprintln!("\x1b[31m✗ {}/{} tests failed\x1b[0m", failed, passed + failed);
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Scan and index all projects
+fn update_all(force: bool, config: &Config, db: &mut Database) -> Result<()> {
+    // Step 1: Scan for projects
+    eprintln!("\x1b[36m⏳\x1b[0m Scanning for projects...");
+    let mut scanner = Scanner::new(config, db);
+    let result = scanner.scan_all()?;
 
     eprintln!(
         "\x1b[32m✓\x1b[0m Found \x1b[1m{}\x1b[0m projects ({} from paths, {} from Spotlight)",
@@ -260,6 +481,20 @@ fn scan_projects(spotlight_only: bool, paths_only: bool, config: &Config, db: &m
 
     if result.pruned > 0 {
         eprintln!("\x1b[33m⚠\x1b[0m Removed {} stale entries", result.pruned);
+    }
+
+    // Step 2: Index for semantic search
+    if force {
+        eprintln!("\x1b[36m⏳\x1b[0m Clearing existing embeddings...");
+        db.clear_embeddings()?;
+    }
+
+    let count = semantic::index_projects(db)?;
+
+    if count > 0 {
+        eprintln!("\x1b[32m✓\x1b[0m Indexed \x1b[1m{}\x1b[0m projects for semantic search", count);
+    } else {
+        eprintln!("\x1b[32m✓\x1b[0m All projects already indexed");
     }
 
     Ok(())
@@ -294,15 +529,6 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
     eprintln!("\x1b[36mProjects\x1b[0m (showing {}/{}):\n", std::cmp::min(limit, total), total);
 
     for project in projects.iter().take(limit) {
-        let (source_badge, source_color) = match project.source {
-            ProjectSource::Spotlight => ("S", "35"),  // magenta
-            ProjectSource::Manual => ("M", "33"),     // yellow
-            ProjectSource::Scan => ("P", "34"),       // blue
-        };
-
-        let frecency = project.frecency_score();
-        let frecency_color = if frecency > 50.0 { "32" } else { "90" };
-
         let git_info = if show_git {
             get_git_status(&project.path)
                 .map(|(branch, dirty)| {
@@ -315,11 +541,7 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
         };
 
         println!(
-            "  \x1b[{}m[{}]\x1b[0m \x1b[{}m{:>5.0}\x1b[0m \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
-            source_color,
-            source_badge,
-            frecency_color,
-            frecency,
+            "  \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
             project.name,
             git_info,
             project.path.display()
@@ -381,8 +603,3 @@ fn show_config(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn refresh(config: &Config, db: &mut Database) -> Result<()> {
-    eprintln!("\x1b[36m⏳\x1b[0m Clearing cache...");
-    db.clear()?;
-    scan_projects(false, false, config, db)
-}
