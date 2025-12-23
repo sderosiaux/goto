@@ -1,10 +1,7 @@
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
 
 use crate::config::Config;
 
@@ -22,65 +19,21 @@ pub fn set_debug(enabled: bool) {
 /// Global embedding model instance (lazy-loaded, wrapped in Mutex for mutability)
 static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 
-/// Spinner frames for loading animation (braille pattern - smooth and modern)
-const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// Start a spinner animation in a background thread
-fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_clone = Arc::clone(&stop);
-    let msg = message.to_string();
-
-    let handle = thread::spawn(move || {
-        let mut stderr = std::io::stderr();
-
-        // Show first frame immediately
-        let _ = write!(stderr, "\x1b[36m{}\x1b[0m {}", SPINNER[0], msg);
-        let _ = stderr.flush();
-
-        let mut i = 1;
-        while !stop_clone.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(80));
-            if stop_clone.load(Ordering::Relaxed) {
-                break;
-            }
-            let frame = SPINNER[i % SPINNER.len()];
-            let _ = write!(stderr, "\r\x1b[2K\x1b[36m{}\x1b[0m {}", frame, msg);
-            let _ = stderr.flush();
-            i += 1;
-        }
-
-        // Clear and print done
-        let _ = writeln!(stderr, "\r\x1b[2K\x1b[32m✓\x1b[0m Model ready");
-    });
-
-    (stop, handle)
-}
-
 /// Initialize the embedding model (downloads on first use ~80MB)
 fn init_model() -> Result<TextEmbedding> {
     let debug = DEBUG.load(Ordering::Relaxed);
-
-    // Start spinner animation (shows after 300ms delay)
-    let (stop, handle) = start_spinner("Loading semantic model...");
 
     // Use centralized cache directory instead of current working directory
     let cache_dir = Config::model_cache_dir()?;
     std::fs::create_dir_all(&cache_dir)
         .with_context(|| format!("Failed to create cache directory: {}", cache_dir.display()))?;
 
-    let result = TextEmbedding::try_new(
+    TextEmbedding::try_new(
         InitOptions::new(EmbeddingModel::MultilingualE5Small)
             .with_cache_dir(cache_dir)
             .with_show_download_progress(debug),
     )
-    .context("Failed to initialize embedding model");
-
-    // Stop spinner
-    stop.store(true, Ordering::Relaxed);
-    let _ = handle.join();
-
-    result
+    .context("Failed to initialize embedding model")
 }
 
 /// Generate embedding for a single text
