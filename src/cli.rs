@@ -24,6 +24,10 @@ pub struct Cli {
     /// Show debug information
     #[arg(long)]
     pub debug: bool,
+
+    /// Just cd, don't run post command
+    #[arg(short = 'c', long)]
+    pub cd_only: bool,
 }
 
 #[derive(Subcommand)]

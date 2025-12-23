@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         if query == "-" {
             return show_recent(5, &config, &db);
         }
-        return find_project(&query, cli.all, cli.limit, &config, &db);
+        return find_project(&query, cli.all, cli.limit, cli.cd_only, &config, &db);
     }
 
     match cli.command {
@@ -243,7 +243,7 @@ fn calculate_boosted_score(
     base_score
 }
 
-fn find_project(query: &str, show_all: bool, limit: usize, config: &Config, db: &Database) -> Result<()> {
+fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config: &Config, db: &Database) -> Result<()> {
     let projects = db.get_all_projects()?;
 
     if projects.is_empty() {
@@ -262,8 +262,10 @@ fn find_project(query: &str, show_all: bool, limit: usize, config: &Config, db: 
     if let Some(exact) = projects.iter().find(|p| p.name.to_lowercase() == query_lower) {
         db.mark_accessed(&exact.path)?;
         println!("{}", exact.path.display());
-        if let Some(cmd) = &config.post_command {
-            eprintln!("__GOTO_POST_CMD__:{}", cmd);
+        if !cd_only {
+            if let Some(cmd) = &config.post_command {
+                eprintln!("__GOTO_POST_CMD__:{}", cmd);
+            }
         }
         return Ok(());
     }
@@ -288,8 +290,10 @@ fn find_project(query: &str, show_all: bool, limit: usize, config: &Config, db: 
             }
 
             // Output post command if configured
-            if let Some(cmd) = &config.post_command {
-                eprintln!("__GOTO_POST_CMD__:{}", cmd);
+            if !cd_only {
+                if let Some(cmd) = &config.post_command {
+                    eprintln!("__GOTO_POST_CMD__:{}", cmd);
+                }
             }
         }
         None => {
