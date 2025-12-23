@@ -25,8 +25,8 @@ static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 /// Spinner frames for loading animation (braille pattern - smooth and modern)
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Delay before showing spinner (don't show for fast loads)
-const SPINNER_DELAY_MS: u64 = 300;
+/// Delay before showing spinner (minimal - show almost immediately)
+const SPINNER_DELAY_MS: u64 = 10;
 
 /// Start a spinner animation in a background thread (shows after delay)
 fn start_spinner(message: &str) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
