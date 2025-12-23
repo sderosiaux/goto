@@ -28,6 +28,9 @@ walkdir = "2"
 directories = "5"
 dirs = "5"
 
+# Regex (lightweight)
+regex-lite = "0.1"
+
 # Error handling
 anyhow = "1"
 thiserror = "1"

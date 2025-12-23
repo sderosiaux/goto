@@ -193,6 +193,56 @@ const SEMANTIC_MIN_THRESHOLD: f64 = 55.0;
 /// Boost score if project name contains query
 const SUBSTRING_BOOST: f32 = 20.0;
 
+/// Stronger boost if project name exactly matches query
+const EXACT_NAME_BOOST: f32 = 40.0;
+
+/// Smaller boost if query words found in metadata (README, folders, types)
+const METADATA_BOOST: f32 = 10.0;
+
+/// Calculate boosted score based on name and metadata matching
+fn calculate_boosted_score(
+    project_name: &str,
+    query_lower: &str,
+    base_score: f32,
+    embedded_text: Option<&str>,
+) -> f32 {
+    let name_lower = project_name.to_lowercase();
+
+    // Check for exact match first (strongest boost)
+    if name_lower == query_lower {
+        return (base_score + EXACT_NAME_BOOST).min(100.0);
+    }
+
+    // Check if name contains the full query
+    if name_lower.contains(query_lower) {
+        return (base_score + SUBSTRING_BOOST).min(100.0);
+    }
+
+    // Check if name contains ALL significant words from the query (3+ chars)
+    let query_words: Vec<&str> = query_lower
+        .split_whitespace()
+        .filter(|w| w.len() >= 3)
+        .collect();
+
+    if !query_words.is_empty() {
+        let all_words_match = query_words.iter().all(|w| name_lower.contains(*w));
+        if all_words_match {
+            return (base_score + SUBSTRING_BOOST).min(100.0);
+        }
+
+        // Check if ALL query words appear in embedded metadata
+        if let Some(text) = embedded_text {
+            let text_lower = text.to_lowercase();
+            let all_in_metadata = query_words.iter().all(|w| text_lower.contains(*w));
+            if all_in_metadata {
+                return (base_score + METADATA_BOOST).min(100.0);
+            }
+        }
+    }
+
+    base_score
+}
+
 fn find_project(query: &str, show_all: bool, limit: usize, config: &Config, db: &Database) -> Result<()> {
     let projects = db.get_all_projects()?;
 
@@ -263,20 +313,21 @@ fn find_best_match(
         return Ok(None);
     }
 
-    // Get more results to find substring matches
+    // Get more results to find matching names
     if let Ok(results) = semantic::semantic_search(db, query, 10) {
         let query_lower = query.to_lowercase();
 
-        // Apply substring boost and find best
+        // Apply name and metadata-based boost and find best
         let best = results
             .into_iter()
             .map(|(project, score)| {
-                let name_lower = project.name.to_lowercase();
-                let boosted = if name_lower.contains(&query_lower) {
-                    (score + SUBSTRING_BOOST).min(100.0)
-                } else {
-                    score
-                };
+                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
+                let boosted = calculate_boosted_score(
+                    &project.name,
+                    &query_lower,
+                    score,
+                    embedded_text.as_deref(),
+                );
                 (project, boosted)
             })
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -305,16 +356,17 @@ fn show_all_matches(query: &str, limit: usize, db: &Database) -> Result<()> {
     if let Ok(results) = semantic::semantic_search(db, query, fetch_limit) {
         let query_lower = query.to_lowercase();
 
-        // Boost scores for substring matches and re-sort
+        // Boost scores for name and metadata matches and re-sort
         let mut boosted: Vec<_> = results
             .into_iter()
             .map(|(project, score)| {
-                let name_lower = project.name.to_lowercase();
-                let boosted_score = if name_lower.contains(&query_lower) {
-                    (score + SUBSTRING_BOOST).min(100.0)
-                } else {
-                    score
-                };
+                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
+                let boosted_score = calculate_boosted_score(
+                    &project.name,
+                    &query_lower,
+                    score,
+                    embedded_text.as_deref(),
+                );
                 (project, boosted_score)
             })
             .collect();
@@ -327,12 +379,14 @@ fn show_all_matches(query: &str, limit: usize, db: &Database) -> Result<()> {
         for (i, (project, score)) in boosted.iter().take(limit).enumerate() {
             let has_duplicate = names.iter().filter(|n| **n == &project.name).count() > 1;
             let display_name = if has_duplicate {
-                // Show parent directory for disambiguation
-                let parent = project.path.parent()
-                    .and_then(|p| p.file_name())
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                format!("{} \x1b[90m({})\x1b[0m", project.name, parent)
+                // Show full path with ~ for home directory
+                let home = dirs::home_dir().unwrap_or_default();
+                let path_str = if project.path.starts_with(&home) {
+                    format!("~/{}", project.path.strip_prefix(&home).unwrap().display())
+                } else {
+                    project.path.display().to_string()
+                };
+                format!("{} \x1b[90m({})\x1b[0m", project.name, path_str)
             } else {
                 project.name.clone()
             };
@@ -413,19 +467,20 @@ top_n = 5
     let mut failed = 0;
 
     for test in &tests.tests {
-        // Run semantic search with substring boost
+        // Run semantic search with name-based boost
         let results = semantic::semantic_search(db, &test.query, 20)?;
         let query_lower = test.query.to_lowercase();
 
         let mut boosted: Vec<_> = results
             .into_iter()
             .map(|(project, score)| {
-                let name_lower = project.name.to_lowercase();
-                let boosted_score = if name_lower.contains(&query_lower) {
-                    (score + SUBSTRING_BOOST).min(100.0)
-                } else {
-                    score
-                };
+                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
+                let boosted_score = calculate_boosted_score(
+                    &project.name,
+                    &query_lower,
+                    score,
+                    embedded_text.as_deref(),
+                );
                 (project, boosted_score)
             })
             .collect();

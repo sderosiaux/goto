@@ -281,6 +281,19 @@ impl Database {
         Ok(())
     }
 
+    /// Get embedded_text for a project by path (used for metadata-based boosting)
+    pub fn get_embedded_text(&self, path: &std::path::Path) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT pm.embedded_text FROM project_metadata pm
+             JOIN projects p ON pm.project_id = p.id
+             WHERE p.path = ?",
+        )?;
+        let result = stmt
+            .query_row([path.to_string_lossy().as_ref()], |row| row.get(0))
+            .optional()?;
+        Ok(result)
+    }
+
     /// Store embedding for a project
     pub fn upsert_embedding(&self, project_id: i64, embedding: &[f32]) -> Result<()> {
         // Delete existing embedding if any
