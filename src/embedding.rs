@@ -3,6 +3,8 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::config::Config;
+
 /// Vector dimension for AllMiniLML6V2 model
 pub const EMBEDDING_DIM: usize = 384;
 
@@ -17,14 +19,22 @@ pub fn set_debug(enabled: bool) {
 /// Global embedding model instance (lazy-loaded, wrapped in Mutex for mutability)
 static MODEL: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
 
-/// Initialize the embedding model (downloads on first use ~450MB)
+/// Initialize the embedding model (downloads on first use ~80MB)
 fn init_model() -> Result<TextEmbedding> {
     let debug = DEBUG.load(Ordering::Relaxed);
     if debug {
         eprintln!("\x1b[36m⏳\x1b[0m Loading embedding model...");
     }
+
+    // Use centralized cache directory instead of current working directory
+    let cache_dir = Config::model_cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)
+        .with_context(|| format!("Failed to create cache directory: {}", cache_dir.display()))?;
+
     TextEmbedding::try_new(
-        InitOptions::new(EmbeddingModel::MultilingualE5Small).with_show_download_progress(debug),
+        InitOptions::new(EmbeddingModel::MultilingualE5Small)
+            .with_cache_dir(cache_dir)
+            .with_show_download_progress(debug),
     )
     .context("Failed to initialize embedding model")
 }

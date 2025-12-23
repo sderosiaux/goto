@@ -101,6 +101,13 @@ impl Config {
         Ok(data_dir.join("cache.db"))
     }
 
+    /// Get the cache directory for embedding models
+    pub fn model_cache_dir() -> Result<PathBuf> {
+        ProjectDirs::from("dev", "goto", "goto")
+            .map(|dirs| dirs.cache_dir().to_path_buf())
+            .context("Could not determine cache directory")
+    }
+
     /// Load config from file, or create default if it doesn't exist
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
