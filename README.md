@@ -62,24 +62,6 @@ goto -
 goto test
 ```
 
-## Testing & Tuning
-
-Create `~/Library/Application Support/goto/tests.toml` to define expected ranking:
-
-```toml
-[[tests]]
-query = "cache rust"
-expected = ["foyer"]
-top_n = 3
-
-[[tests]]
-query = "kafka"
-expected = ["kafka", "kafka-streams"]
-top_n = 5
-```
-
-Run `goto test` to validate. Iterate until your expectations are met.
-
 ## How it works
 
 1. **Indexing**: Extracts metadata from each project (description, README excerpt, tech stack, keywords)

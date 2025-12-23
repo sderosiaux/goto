@@ -321,11 +321,26 @@ fn show_all_matches(query: &str, limit: usize, db: &Database) -> Result<()> {
 
         boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
+        // Find duplicate names to show parent dir
+        let names: Vec<_> = boosted.iter().take(limit).map(|(p, _)| &p.name).collect();
+
         for (i, (project, score)) in boosted.iter().take(limit).enumerate() {
+            let has_duplicate = names.iter().filter(|n| **n == &project.name).count() > 1;
+            let display_name = if has_duplicate {
+                // Show parent directory for disambiguation
+                let parent = project.path.parent()
+                    .and_then(|p| p.file_name())
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                format!("{} \x1b[90m({})\x1b[0m", project.name, parent)
+            } else {
+                project.name.clone()
+            };
+
             eprintln!(
                 "\x1b[35m{}.\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m({:.0}%)\x1b[0m",
                 i + 1,
-                project.name,
+                display_name,
                 score
             );
         }
