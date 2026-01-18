@@ -271,7 +271,7 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
     }
 
     // Step 2: Use semantic search
-    let best_project = find_best_match(query, &projects, db)?;
+    let best_project = find_best_match(query, db)?;
 
     match best_project {
         Some((project, score, is_semantic)) => {
@@ -307,11 +307,7 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
 }
 
 /// Find the best match using semantic search with substring boost
-fn find_best_match(
-    query: &str,
-    _projects: &[Project],
-    db: &Database,
-) -> Result<Option<(Project, f64, bool)>> {
+fn find_best_match(query: &str, db: &Database) -> Result<Option<(Project, f64, bool)>> {
     let (indexed, _) = db.embedding_stats()?;
     if indexed == 0 {
         return Ok(None);
