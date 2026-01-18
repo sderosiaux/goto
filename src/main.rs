@@ -204,6 +204,13 @@ const EXACT_NAME_BOOST: f32 = 40.0;
 /// Smaller boost if query words found in metadata (README, folders, types)
 const METADATA_BOOST: f32 = 10.0;
 
+/// Result of a semantic search match
+struct SearchResult {
+    project: Project,
+    score: f64,
+    is_semantic: bool,
+}
+
 /// Calculate boosted score based on name and metadata matching
 fn calculate_boosted_score(
     project_name: &str,
@@ -300,21 +307,21 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
     }
 
     // Step 2: Use semantic search
-    let best_project = find_best_match(query, db)?;
+    let best = find_best_match(query, db)?;
 
-    match best_project {
-        Some((project, score, is_semantic)) => {
+    match best {
+        Some(result) => {
             // Mark as accessed
-            db.mark_accessed(&project.path)?;
+            db.mark_accessed(&result.project.path)?;
 
             // Output path for the shell function to cd to
-            println!("{}", project.path.display());
+            println!("{}", result.project.path.display());
 
             // Show match info on stderr (doesn't interfere with path)
-            if is_semantic {
+            if result.is_semantic {
                 eprintln!(
                     "\x1b[35m◆\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m(semantic: {:.0}%)\x1b[0m",
-                    project.name, score
+                    result.project.name, result.score
                 );
             }
 
@@ -336,7 +343,7 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
 }
 
 /// Find the best match using semantic search with substring boost
-fn find_best_match(query: &str, db: &Database) -> Result<Option<(Project, f64, bool)>> {
+fn find_best_match(query: &str, db: &Database) -> Result<Option<SearchResult>> {
     let (indexed, _) = db.embedding_stats()?;
     if indexed == 0 {
         return Ok(None);
@@ -348,7 +355,11 @@ fn find_best_match(query: &str, db: &Database) -> Result<Option<(Project, f64, b
 
         if let Some((project, score)) = boosted.into_iter().next() {
             if score as f64 >= SEMANTIC_MIN_THRESHOLD {
-                return Ok(Some((project, score as f64, true)));
+                return Ok(Some(SearchResult {
+                    project,
+                    score: score as f64,
+                    is_semantic: true,
+                }));
             }
         }
     }
