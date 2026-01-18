@@ -427,17 +427,49 @@ struct TestFile {
     tests: Vec<TestCase>,
 }
 
-/// Run ranking tests from config file
-fn run_tests(db: &Database) -> Result<()> {
-    let config_dir = directories::ProjectDirs::from("", "", "goto")
-        .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config/goto"));
+/// Result of running a single test case
+struct TestResult<'a> {
+    passed: bool,
+    found: Vec<&'a str>,
+    missing: Vec<&'a str>,
+    top_results: Vec<(String, f32)>, // (name, score) for display on failure
+}
 
-    let test_file = config_dir.join("tests.toml");
+/// Run a single test case and return the result
+fn run_single_test<'a>(test: &'a TestCase, db: &Database) -> Result<TestResult<'a>> {
+    let results = semantic::semantic_search(db, &test.query, 20)?;
+    let boosted = boost_and_sort_results(results, &test.query, db);
 
-    if !test_file.exists() {
-        // Create example test file
-        let example = r#"# Ranking tests - run with: goto test
+    let top_names: Vec<_> = boosted.iter().take(test.top_n).map(|(p, _)| &p.name).collect();
+
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+
+    for exp in &test.expected {
+        if top_names.contains(&exp) {
+            found.push(exp.as_str());
+        } else {
+            missing.push(exp.as_str());
+        }
+    }
+
+    let top_results: Vec<_> = boosted
+        .iter()
+        .take(test.top_n)
+        .map(|(p, score)| (p.name.clone(), *score))
+        .collect();
+
+    Ok(TestResult {
+        passed: missing.is_empty(),
+        found,
+        missing,
+        top_results,
+    })
+}
+
+/// Create example test file if it doesn't exist
+fn create_example_test_file(config_dir: &std::path::Path, test_file: &std::path::Path) -> Result<()> {
+    let example = r#"# Ranking tests - run with: goto test
 # Each test checks if expected projects appear in top N results
 
 [[tests]]
@@ -455,10 +487,23 @@ query = "kafka"
 expected = ["kafka", "apache-kafka-2"]
 top_n = 5
 "#;
-        std::fs::create_dir_all(&config_dir)?;
-        std::fs::write(&test_file, example)?;
-        eprintln!("\x1b[32m✓\x1b[0m Created example test file: {}", test_file.display());
-        eprintln!("  Edit it and run \x1b[1mgoto test\x1b[0m again");
+    std::fs::create_dir_all(config_dir)?;
+    std::fs::write(test_file, example)?;
+    eprintln!("\x1b[32m✓\x1b[0m Created example test file: {}", test_file.display());
+    eprintln!("  Edit it and run \x1b[1mgoto test\x1b[0m again");
+    Ok(())
+}
+
+/// Run ranking tests from config file
+fn run_tests(db: &Database) -> Result<()> {
+    let config_dir = directories::ProjectDirs::from("", "", "goto")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config/goto"));
+
+    let test_file = config_dir.join("tests.toml");
+
+    if !test_file.exists() {
+        create_example_test_file(&config_dir, &test_file)?;
         return Ok(());
     }
 
@@ -475,43 +520,26 @@ top_n = 5
     let mut failed = 0;
 
     for test in &tests.tests {
-        // Run semantic search with name-based boost
-        let results = semantic::semantic_search(db, &test.query, 20)?;
-        let boosted = boost_and_sort_results(results, &test.query, db);
+        let result = run_single_test(test, db)?;
 
-        let top_names: Vec<_> = boosted.iter().take(test.top_n).map(|(p, _)| &p.name).collect();
-
-        // Check if any expected result is in top N (exact match)
-        let mut found: Vec<&str> = vec![];
-        let mut missing: Vec<&str> = vec![];
-
-        for exp in &test.expected {
-            if top_names.contains(&exp) {
-                found.push(exp);
-            } else {
-                missing.push(exp);
-            }
-        }
-
-        if missing.is_empty() {
+        if result.passed {
             passed += 1;
             eprintln!(
                 "\x1b[32m✓\x1b[0m \"{}\" → {} \x1b[90m(found: {})\x1b[0m",
                 test.query,
-                top_names.first().map(|s| s.as_str()).unwrap_or("?"),
-                found.join(", ")
+                result.top_results.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                result.found.join(", ")
             );
         } else {
             failed += 1;
             eprintln!(
                 "\x1b[31m✗\x1b[0m \"{}\" → {} \x1b[90m(missing: {})\x1b[0m",
                 test.query,
-                top_names.first().map(|s| s.as_str()).unwrap_or("?"),
-                missing.join(", ")
+                result.top_results.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                result.missing.join(", ")
             );
-            // Show actual top results
-            for (i, (p, score)) in boosted.iter().take(test.top_n).enumerate() {
-                eprintln!("    {}. {} ({:.0}%)", i + 1, p.name, score);
+            for (i, (name, score)) in result.top_results.iter().enumerate() {
+                eprintln!("    {}. {} ({:.0}%)", i + 1, name, score);
             }
         }
     }
