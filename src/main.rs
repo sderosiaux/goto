@@ -243,6 +243,30 @@ fn calculate_boosted_score(
     base_score
 }
 
+/// Apply name/metadata boosting to search results and sort by score descending
+fn boost_and_sort_results(
+    results: Vec<(Project, f32)>,
+    query: &str,
+    db: &Database,
+) -> Vec<(Project, f32)> {
+    let query_lower = query.to_lowercase();
+    let mut boosted: Vec<_> = results
+        .into_iter()
+        .map(|(project, score)| {
+            let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
+            let boosted_score = calculate_boosted_score(
+                &project.name,
+                &query_lower,
+                score,
+                embedded_text.as_deref(),
+            );
+            (project, boosted_score)
+        })
+        .collect();
+    boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    boosted
+}
+
 fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config: &Config, db: &Database) -> Result<()> {
     let projects = db.get_all_projects()?;
 
@@ -315,24 +339,9 @@ fn find_best_match(query: &str, db: &Database) -> Result<Option<(Project, f64, b
 
     // Get more results to find matching names
     if let Ok(results) = semantic::semantic_search(db, query, 10) {
-        let query_lower = query.to_lowercase();
+        let boosted = boost_and_sort_results(results, query, db);
 
-        // Apply name and metadata-based boost and find best
-        let best = results
-            .into_iter()
-            .map(|(project, score)| {
-                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
-                let boosted = calculate_boosted_score(
-                    &project.name,
-                    &query_lower,
-                    score,
-                    embedded_text.as_deref(),
-                );
-                (project, boosted)
-            })
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        if let Some((project, score)) = best {
+        if let Some((project, score)) = boosted.into_iter().next() {
             if score as f64 >= SEMANTIC_MIN_THRESHOLD {
                 return Ok(Some((project, score as f64, true)));
             }
@@ -354,24 +363,7 @@ fn show_all_matches(query: &str, limit: usize, db: &Database) -> Result<()> {
     // Fetch more than needed to allow for boosting reordering
     let fetch_limit = (limit * 2).max(20);
     if let Ok(results) = semantic::semantic_search(db, query, fetch_limit) {
-        let query_lower = query.to_lowercase();
-
-        // Boost scores for name and metadata matches and re-sort
-        let mut boosted: Vec<_> = results
-            .into_iter()
-            .map(|(project, score)| {
-                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
-                let boosted_score = calculate_boosted_score(
-                    &project.name,
-                    &query_lower,
-                    score,
-                    embedded_text.as_deref(),
-                );
-                (project, boosted_score)
-            })
-            .collect();
-
-        boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let boosted = boost_and_sort_results(results, query, db);
 
         // Find duplicate names to show parent dir
         let names: Vec<_> = boosted.iter().take(limit).map(|(p, _)| &p.name).collect();
@@ -469,23 +461,7 @@ top_n = 5
     for test in &tests.tests {
         // Run semantic search with name-based boost
         let results = semantic::semantic_search(db, &test.query, 20)?;
-        let query_lower = test.query.to_lowercase();
-
-        let mut boosted: Vec<_> = results
-            .into_iter()
-            .map(|(project, score)| {
-                let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
-                let boosted_score = calculate_boosted_score(
-                    &project.name,
-                    &query_lower,
-                    score,
-                    embedded_text.as_deref(),
-                );
-                (project, boosted_score)
-            })
-            .collect();
-
-        boosted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let boosted = boost_and_sort_results(results, &test.query, db);
 
         let top_names: Vec<_> = boosted.iter().take(test.top_n).map(|(p, _)| &p.name).collect();
 
