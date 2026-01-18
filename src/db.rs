@@ -73,7 +73,7 @@ impl Database {
     pub fn open() -> Result<Self> {
         // Initialize sqlite-vec extension (must be done before opening connection)
         unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+            sqlite3_auto_extension(Some(std::mem::transmute::<*const (), unsafe extern "C" fn(*mut rusqlite::ffi::sqlite3, *mut *mut i8, *const rusqlite::ffi::sqlite3_api_routines) -> i32>(sqlite3_vec_init as *const ())));
         }
 
         let db_path = Config::db_path()?;
@@ -171,7 +171,7 @@ impl Database {
 
             let last_modified = std::fs::metadata(path)
                 .and_then(|m| m.modified())
-                .map(|t| DateTime::<Utc>::from(t))
+                .map(DateTime::<Utc>::from)
                 .unwrap_or_else(|_| Utc::now())
                 .to_rfc3339();
 
@@ -189,7 +189,7 @@ impl Database {
     }
 
     /// Mark a project as accessed (increment count and update timestamp)
-    pub fn mark_accessed(&self, path: &PathBuf) -> Result<()> {
+    pub fn mark_accessed(&self, path: &std::path::Path) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "UPDATE projects SET last_accessed = ?1, access_count = access_count + 1 WHERE path = ?2",

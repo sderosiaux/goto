@@ -71,7 +71,7 @@ pub fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
         .map_err(|_| anyhow::anyhow!("Failed to lock embedding model"))?;
 
     model
-        .embed(texts.to_vec(), None)
+        .embed(texts, None)
         .context("Failed to generate embeddings")
 }
 

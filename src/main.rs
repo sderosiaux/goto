@@ -498,7 +498,7 @@ top_n = 5
         let mut missing: Vec<&str> = vec![];
 
         for exp in &test.expected {
-            if top_names.iter().any(|n| *n == exp) {
+            if top_names.contains(&exp) {
                 found.push(exp);
             } else {
                 missing.push(exp);
