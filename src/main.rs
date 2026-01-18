@@ -66,6 +66,16 @@ fn main() -> Result<()> {
     }
 }
 
+/// Format git status as colored string (branch name + dirty marker)
+fn format_git_info(path: &Path) -> String {
+    get_git_status(path)
+        .map(|(branch, dirty)| {
+            let dirty_marker = if dirty { "\x1b[31m*\x1b[0m" } else { "" };
+            format!(" \x1b[33m{}\x1b[0m{}", branch, dirty_marker)
+        })
+        .unwrap_or_default()
+}
+
 /// Get git branch and dirty status for a project
 fn get_git_status(path: &Path) -> Option<(String, bool)> {
     // Get current branch
@@ -108,12 +118,7 @@ fn show_recent(limit: usize, _config: &Config, db: &Database) -> Result<()> {
     eprintln!("\x1b[36mRecent projects:\x1b[0m\n");
 
     for (i, project) in projects.iter().take(limit).enumerate() {
-        let git_info = get_git_status(&project.path)
-            .map(|(branch, dirty)| {
-                let dirty_marker = if dirty { "*" } else { "" };
-                format!(" \x1b[33m{}{}\x1b[0m", branch, dirty_marker)
-            })
-            .unwrap_or_default();
+        let git_info = format_git_info(&project.path);
 
         eprintln!(
             "  \x1b[33m{}.\x1b[0m \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
@@ -575,16 +580,7 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
     eprintln!("\x1b[36mProjects\x1b[0m (showing {}/{}):\n", std::cmp::min(limit, total), total);
 
     for project in projects.iter().take(limit) {
-        let git_info = if show_git {
-            get_git_status(&project.path)
-                .map(|(branch, dirty)| {
-                    let dirty_marker = if dirty { "\x1b[31m*\x1b[0m" } else { "" };
-                    format!(" \x1b[33m{}\x1b[0m{}", branch, dirty_marker)
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let git_info = if show_git { format_git_info(&project.path) } else { String::new() };
 
         println!(
             "  \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
