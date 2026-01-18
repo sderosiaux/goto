@@ -7,33 +7,33 @@ authors = ["sderosiaux"]
 
 [dependencies]
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }  # pinned: sqlite-vec requires ^0.31
 
 # Vector search (sqlite-vec extension)
 sqlite-vec = "0.1"
-zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy = { version = "0.7", features = ["derive"] }  # pinned: 0.8+ has breaking changes
 
 # Embeddings (ONNX-based, offline)
-fastembed = "5"
+fastembed = "5.8"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "0.8"  # pinned: 0.9+ has breaking API changes
 
 # File system
-walkdir = "2"
-directories = "5"
-dirs = "5"
+walkdir = "2.5"
+directories = "6"
+dirs = "6"
 
 # Regex (lightweight)
 regex-lite = "0.1"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
