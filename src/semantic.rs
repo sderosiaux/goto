@@ -142,6 +142,26 @@ fn derive_semantic_hints(tech_stack: &[String]) -> Vec<&'static str> {
     hints
 }
 
+/// Check if a path should be excluded from scanning (build output, deps, etc.)
+fn is_excluded_path(path_str: &str) -> bool {
+    path_str.contains("node_modules")
+        || path_str.contains("/target/")
+        || path_str.contains("/build/")
+        || path_str.contains("/dist/")
+        || path_str.contains("/vendor/")
+        || path_str.contains("/.git/")
+        || path_str.contains("/generated/")
+}
+
+/// Check if a path looks like a test file
+fn is_test_path(path_str: &str) -> bool {
+    path_str.contains("/test/")
+        || path_str.contains("/tests/")
+        || path_str.contains("/spec/")
+        || path_str.contains("_test.")
+        || path_str.contains(".test.")
+}
+
 /// Extract semantic hints from directory structure
 fn extract_structure_hints(path: &Path) -> Vec<String> {
     let mut names: HashSet<String> = HashSet::new();
@@ -176,13 +196,7 @@ fn extract_structure_hints(path: &Path) -> Vec<String> {
 
         // Skip paths containing build/vendor/node_modules
         let path_str = entry.path().to_string_lossy().to_lowercase();
-        if path_str.contains("node_modules")
-            || path_str.contains("/target/")
-            || path_str.contains("/build/")
-            || path_str.contains("/dist/")
-            || path_str.contains("/vendor/")
-            || path_str.contains("/.git/")
-        {
+        if is_excluded_path(&path_str) {
             continue;
         }
 
@@ -196,9 +210,8 @@ fn extract_structure_hints(path: &Path) -> Vec<String> {
     result
 }
 
-/// Extract type names from largest source files
-fn extract_type_names(path: &Path) -> Vec<String> {
-    // Find source files with their sizes
+/// Find the largest source files in a project (for type extraction)
+fn find_largest_source_files(path: &Path, limit: usize) -> Vec<std::path::PathBuf> {
     let mut source_files: Vec<(std::path::PathBuf, u64)> = Vec::new();
 
     for entry in WalkDir::new(path)
@@ -217,26 +230,12 @@ fn extract_type_names(path: &Path) -> Vec<String> {
             None => continue,
         };
 
-        // Only source files
         if !SOURCE_EXTENSIONS.contains(&ext) {
             continue;
         }
 
-        // Skip test files and generated/vendor paths
         let path_str = file_path.to_string_lossy().to_lowercase();
-        if path_str.contains("/test/")
-            || path_str.contains("/tests/")
-            || path_str.contains("/spec/")
-            || path_str.contains("_test.")
-            || path_str.contains(".test.")
-            || path_str.contains("node_modules")
-            || path_str.contains("/target/")
-            || path_str.contains("/build/")
-            || path_str.contains("/dist/")
-            || path_str.contains("/vendor/")
-            || path_str.contains("/generated/")
-            || path_str.contains("/.git/")
-        {
+        if is_excluded_path(&path_str) || is_test_path(&path_str) {
             continue;
         }
 
@@ -245,38 +244,40 @@ fn extract_type_names(path: &Path) -> Vec<String> {
         }
     }
 
-    // Sort by size descending, take top 10
     source_files.sort_by(|a, b| b.1.cmp(&a.1));
-    source_files.truncate(10);
+    source_files.truncate(limit);
+    source_files.into_iter().map(|(p, _)| p).collect()
+}
 
-    // Extract type names from these files
+/// Truncate content to a safe UTF-8 boundary
+fn truncate_utf8(content: &str, max_len: usize) -> &str {
+    if content.len() <= max_len {
+        return content;
+    }
+    let mut end = max_len;
+    while !content.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    &content[..end]
+}
+
+/// Extract type names from largest source files
+fn extract_type_names(path: &Path) -> Vec<String> {
+    let source_files = find_largest_source_files(path, 10);
     let mut type_names: HashSet<String> = HashSet::new();
 
-    for (file_path, _) in source_files {
+    for file_path in source_files {
         if let Ok(content) = fs::read_to_string(&file_path) {
-            // Limit content to first 50KB to avoid huge files (UTF-8 safe)
-            let content = if content.len() > 50_000 {
-                // Find a safe truncation point at a char boundary
-                let mut end = 50_000;
-                while !content.is_char_boundary(end) && end > 0 {
-                    end -= 1;
-                }
-                &content[..end]
-            } else {
-                &content
-            };
-
+            let content = truncate_utf8(&content, 50_000);
             let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let extracted = extract_types_from_content(content, ext);
-            type_names.extend(extracted);
+            type_names.extend(extract_types_from_content(content, ext));
         }
     }
 
-    // Filter out generic types and return up to 15
     let mut result: Vec<String> = type_names
         .into_iter()
         .filter(|t| !GENERIC_TYPES.contains(&t.as_str()))
-        .filter(|t| t.len() >= 4) // Skip very short names
+        .filter(|t| t.len() >= 4)
         .collect();
     result.sort();
     result.truncate(15);
