@@ -10,15 +10,9 @@ goto() {
 
     # Commands that don't need cd
     case "$1" in
-        scan|list|config|add|remove|refresh|--help|-h|--version|-V)
+        scan|list|config|add|remove|refresh|--help|-h|--version|-V|update|stats|recent|test)
             command goto "$@"
             return $?
-            ;;
-        find)
-            if [[ "$2" == "-a" || "$2" == "--all" ]]; then
-                command goto "$@"
-                return $?
-            fi
             ;;
     esac
 
@@ -78,13 +72,14 @@ _goto_completions() {
     case $state in
         command)
             local commands=(
-                'scan:Scan and index projects'
+                'update:Scan and index projects'
                 'list:List indexed projects'
                 'config:Show configuration'
                 'add:Add a path to scan'
                 'remove:Remove a path from scan'
-                'refresh:Clear cache and re-scan'
-                'find:Find a project by query'
+                'recent:Show recently accessed projects'
+                'stats:Show project access statistics'
+                'test:Run ranking tests'
             )
             _describe 'command' commands
             ;;
