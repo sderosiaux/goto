@@ -883,7 +883,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "goto"
+name = "goto-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
