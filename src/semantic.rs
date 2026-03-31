@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -703,49 +704,75 @@ pub fn index_projects(db: &Database) -> Result<usize> {
 
     // Extract metadata and build texts for embedding
     let mut texts: Vec<String> = Vec::with_capacity(unindexed.len());
-    let mut project_data: Vec<(i64, ProjectMetadata)> = Vec::with_capacity(unindexed.len());
+    let mut project_info: Vec<(i64, String, ProjectMetadata)> = Vec::with_capacity(unindexed.len());
 
     for (id, path, name) in &unindexed {
         let meta = extract_metadata(path);
         let text = meta.to_embedding_text(name);
         texts.push(text);
-        project_data.push((*id, meta));
+        project_info.push((*id, name.clone(), meta));
     }
 
     // Generate embeddings in batch
     let embeddings = embed_texts(&texts)?;
 
-    // Store in database
-    for ((id, meta), (embedding, text)) in project_data.iter().zip(embeddings.iter().zip(texts.iter())) {
-        db.upsert_metadata(
-            *id,
-            meta.description.as_deref(),
-            meta.readme_excerpt.as_deref(),
-            text,
-        )?;
-
+    // Store in database (vector embedding + metadata + FTS5 entry)
+    for ((id, name, meta), (embedding, text)) in project_info.iter().zip(embeddings.iter().zip(texts.iter())) {
+        db.upsert_metadata(*id, meta.description.as_deref(), meta.readme_excerpt.as_deref(), text)?;
         db.upsert_embedding(*id, embedding)?;
+        db.fts_upsert(*id, name, text)?;
     }
 
     Ok(unindexed.len())
 }
 
-/// Perform semantic search
+/// RRF constant — standard value from Cormack et al. (SIGIR 2009)
+const RRF_K: f32 = 60.0;
+
+/// Scale so that rank-1 from a single system → ~70, rank-1 from both → 100 (capped).
+/// 70 / (1 / (60+1)) ≈ 4270. Compatible with SEMANTIC_MIN_THRESHOLD = 55.
+const RRF_SCALE: f32 = 4270.0;
+
+/// Merge dense (vector) and sparse (FTS5) results via Reciprocal Rank Fusion.
+/// Score = min((Σ 1/(k+rank_i)) * scale, 100). Returns sorted best-first.
+fn rrf_merge(dense: &[(i64, f32)], sparse: &[(i64, f32)]) -> Vec<(i64, f32)> {
+    let dense_ranks: HashMap<i64, usize> =
+        dense.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect();
+    let sparse_ranks: HashMap<i64, usize> =
+        sparse.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect();
+
+    let mut all_ids: Vec<i64> = dense_ranks.keys().copied().collect();
+    for id in sparse_ranks.keys() {
+        if !dense_ranks.contains_key(id) {
+            all_ids.push(*id);
+        }
+    }
+
+    let mut scored: Vec<(i64, f32)> = all_ids
+        .into_iter()
+        .map(|id| {
+            let d = dense_ranks.get(&id).map(|&r| 1.0 / (RRF_K + r as f32 + 1.0)).unwrap_or(0.0);
+            let s = sparse_ranks.get(&id).map(|&r| 1.0 / (RRF_K + r as f32 + 1.0)).unwrap_or(0.0);
+            ((id), ((d + s) * RRF_SCALE).min(100.0))
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored
+}
+
+/// Perform hybrid semantic search (dense vectors + FTS5 BM25) merged via RRF
 pub fn semantic_search(db: &Database, query: &str, limit: usize) -> Result<Vec<(crate::db::Project, f32)>> {
-    // Embed the query
     let query_embedding = embed_text(query)?;
+    let dense = db.find_similar(&query_embedding, limit)?;
+    let sparse = db.fts_search(query, limit).unwrap_or_default();
 
-    // Find similar projects
-    let similar = db.find_similar(&query_embedding, limit)?;
+    let merged = rrf_merge(&dense, &sparse);
 
-    // Convert to projects with scores
-    let mut results = Vec::with_capacity(similar.len());
-    for (project_id, distance) in similar {
+    let mut results = Vec::with_capacity(limit);
+    for (project_id, score) in merged.into_iter().take(limit) {
         if let Some(project) = db.get_project_by_id(project_id)? {
-            // Convert distance to similarity score (0-100)
-            // sqlite-vec uses L2 distance, so we need to convert
-            let similarity = (1.0 / (1.0 + distance)) * 100.0;
-            results.push((project, similarity));
+            results.push((project, score));
         }
     }
 

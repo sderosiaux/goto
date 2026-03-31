@@ -99,6 +99,7 @@ impl Database {
             PRAGMA synchronous = NORMAL;
             PRAGMA temp_store = MEMORY;
             PRAGMA cache_size = -2000;
+            PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,8 +127,7 @@ impl Database {
             "
         )?;
 
-        // Create vector table for embeddings (vec0 virtual table)
-        // This needs to be done separately as virtual tables have special syntax
+        // vec0 virtual table (vector similarity search)
         self.conn.execute(
             &format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS project_embeddings USING vec0(
@@ -136,6 +136,12 @@ impl Database {
                 )",
                 EMBEDDING_DIM
             ),
+            [],
+        )?;
+
+        // FTS5 virtual table (keyword search for hybrid retrieval)
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS project_fts USING fts5(name, embedded_text)",
             [],
         )?;
 
@@ -289,8 +295,10 @@ impl Database {
             return Ok(0);
         }
 
-        // Single DELETE with IN clause
+        // Single DELETE with IN clause (CASCADE handles project_metadata + project_embeddings)
         let placeholders = missing_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let fts_sql = format!("DELETE FROM project_fts WHERE rowid IN ({})", placeholders);
+        self.conn.execute(&fts_sql, rusqlite::params_from_iter(missing_ids.iter()))?;
         let sql = format!("DELETE FROM projects WHERE id IN ({})", placeholders);
         self.conn.execute(&sql, rusqlite::params_from_iter(missing_ids.iter()))?;
 
@@ -426,10 +434,36 @@ impl Database {
         Ok(result)
     }
 
+    /// Insert or replace an FTS5 entry for a project
+    pub fn fts_upsert(&self, project_id: i64, name: &str, embedded_text: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM project_fts WHERE rowid = ?", [project_id])?;
+        self.conn.execute(
+            "INSERT INTO project_fts(rowid, name, embedded_text) VALUES (?, ?, ?)",
+            params![project_id, name, embedded_text],
+        )?;
+        Ok(())
+    }
+
+    /// Keyword search via FTS5 BM25 — returns (project_id, rank) sorted best-first
+    pub fn fts_search(&self, query: &str, limit: usize) -> Result<Vec<(i64, f32)>> {
+        let fts_query = match prepare_fts_query(query) {
+            Some(q) => q,
+            None => return Ok(vec![]),
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT rowid, rank FROM project_fts WHERE project_fts MATCH ? ORDER BY rank LIMIT ?",
+        )?;
+        let results = stmt.query_map(params![fts_query, limit as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, f32>(1)?))
+        })?;
+        results.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// Clear all embeddings (for re-indexing)
     pub fn clear_embeddings(&self) -> Result<()> {
         self.conn.execute("DELETE FROM project_embeddings", [])?;
         self.conn.execute("DELETE FROM project_metadata", [])?;
+        self.conn.execute("DELETE FROM project_fts", [])?;
         Ok(())
     }
 
@@ -444,5 +478,30 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok((indexed, total))
+    }
+}
+
+/// Build a safe FTS5 MATCH query from user input.
+/// Each token becomes a prefix match: `"kafka"* "consumer"*`
+/// Returns None if no valid tokens remain after cleaning.
+fn prepare_fts_query(query: &str) -> Option<String> {
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .filter_map(|t| {
+            let clean: String = t
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                .collect();
+            if clean.len() >= 2 {
+                Some(format!("\"{}\"*", clean))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens.join(" "))
     }
 }
