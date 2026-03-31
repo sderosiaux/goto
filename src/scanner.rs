@@ -58,52 +58,21 @@ impl<'a> Scanner<'a> {
         }
 
         let exclude_patterns = &self.config.exclude_patterns;
-
-        // Collect all project paths first
         let mut projects_to_add = Vec::new();
         let mut git_projects = std::collections::HashSet::new();
+        let mut candidate_dirs: Vec<PathBuf> = Vec::new();
 
+        // Single pass: collect git projects and non-git candidate dirs simultaneously
         for entry in WalkDir::new(base_path)
             .max_depth(self.config.max_depth)
             .follow_links(false)
             .into_iter()
             .filter_entry(|e| {
                 let name = e.file_name().to_string_lossy();
-                // Skip hidden directories (except .git which we're looking for)
                 if name.starts_with('.') && name != ".git" {
                     return false;
                 }
-                // Skip excluded patterns
                 !exclude_patterns.iter().any(|p| name.contains(p))
-            })
-        {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            // Look for .git directories (high priority - always a project)
-            if entry.file_type().is_dir() && entry.file_name() == ".git" {
-                if let Some(parent) = entry.path().parent() {
-                    git_projects.insert(parent.to_path_buf());
-                    projects_to_add.push(parent.to_path_buf());
-                }
-            }
-        }
-
-        // Second pass: find non-git project folders (like blog drafts)
-        // Only index "leaf" project folders - folders with files that are not inside git projects
-        // and not inside other already-indexed non-git folders
-        let mut non_git_projects = Vec::new();
-
-        for entry in WalkDir::new(base_path)
-            .max_depth(self.config.max_depth)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy();
-                !name.starts_with('.')
-                    && !exclude_patterns.iter().any(|p| name.contains(p))
             })
         {
             let entry = match entry {
@@ -115,50 +84,43 @@ impl<'a> Scanner<'a> {
                 continue;
             }
 
-            let dir_path = entry.path();
+            if entry.file_name() == ".git" {
+                if let Some(parent) = entry.path().parent() {
+                    git_projects.insert(parent.to_path_buf());
+                    projects_to_add.push(parent.to_path_buf());
+                }
+            } else {
+                candidate_dirs.push(entry.path().to_path_buf());
+            }
+        }
 
-            // Skip if already a git project or inside a git project
-            if git_projects.contains(dir_path) {
+        // Post-process: find non-git leaf dirs with files
+        let mut non_git_projects = Vec::new();
+        for dir_path in &candidate_dirs {
+            if git_projects.contains(dir_path) || git_projects.iter().any(|gp| dir_path.starts_with(gp)) {
                 continue;
             }
-            if git_projects.iter().any(|gp| dir_path.starts_with(gp)) {
-                continue;
-            }
-
-            // Check if this directory contains files (not just subdirectories)
             if let Ok(contents) = std::fs::read_dir(dir_path) {
                 let has_files = contents
                     .filter_map(|e| e.ok())
                     .any(|e| {
-                        if let Ok(ft) = e.file_type() {
-                            ft.is_file() && !e.file_name().to_string_lossy().starts_with('.')
-                        } else {
-                            false
-                        }
+                        e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                            && !e.file_name().to_string_lossy().starts_with('.')
                     });
-
                 if has_files {
-                    non_git_projects.push(dir_path.to_path_buf());
+                    non_git_projects.push(dir_path.clone());
                 }
             }
         }
 
-        // Filter out parent folders that have child folders with files
-        // Keep only the deepest (leaf) project folders
+        // Keep only leaf dirs (no child dir also in non_git_projects)
         let filtered_non_git: Vec<_> = non_git_projects
             .iter()
-            .filter(|path| {
-                // Keep this path only if no OTHER path is its child (descendant)
-                !non_git_projects.iter().any(|other| {
-                    other != *path && other.starts_with(*path)
-                })
-            })
+            .filter(|path| !non_git_projects.iter().any(|other| other != *path && other.starts_with(*path)))
             .cloned()
             .collect();
 
         projects_to_add.extend(filtered_non_git);
-
-        // Batch insert for performance
         self.db.upsert_projects_batch(&projects_to_add, ProjectSource::Scan)
     }
 

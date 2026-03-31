@@ -198,6 +198,51 @@ impl Database {
         Ok(())
     }
 
+    /// Get a project by exact name match (case-insensitive) — avoids loading all projects
+    pub fn get_project_by_name(&self, name: &str) -> Result<Option<Project>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, name, last_accessed, access_count, source
+             FROM projects WHERE LOWER(name) = LOWER(?1) LIMIT 1",
+        )?;
+        let result = stmt
+            .query_row([name], |row| {
+                Ok(Project {
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    name: row.get(1)?,
+                    last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    access_count: row.get(3)?,
+                    source: row.get::<_, String>(4)?.parse().unwrap_or(ProjectSource::Scan),
+                })
+            })
+            .optional()?;
+        Ok(result)
+    }
+
+    /// Get recently accessed projects — avoids loading all projects into memory
+    pub fn get_recent_projects(&self, limit: usize) -> Result<Vec<Project>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, name, last_accessed, access_count, source
+             FROM projects
+             WHERE access_count > 0
+             ORDER BY last_accessed DESC
+             LIMIT ?",
+        )?;
+        let projects = stmt.query_map([limit as i64], |row| {
+            Ok(Project {
+                path: PathBuf::from(row.get::<_, String>(0)?),
+                name: row.get(1)?,
+                last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                access_count: row.get(3)?,
+                source: row.get::<_, String>(4)?.parse().unwrap_or(ProjectSource::Scan),
+            })
+        })?;
+        projects.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// Get all projects
     pub fn get_all_projects(&self) -> Result<Vec<Project>> {
         let mut stmt = self.conn.prepare(
@@ -244,15 +289,10 @@ impl Database {
             return Ok(0);
         }
 
-        // Batch delete in single transaction
-        let tx = self.conn.transaction()?;
-        {
-            let mut delete_stmt = tx.prepare("DELETE FROM projects WHERE id = ?")?;
-            for id in &missing_ids {
-                delete_stmt.execute([id])?;
-            }
-        }
-        tx.commit()?;
+        // Single DELETE with IN clause
+        let placeholders = missing_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM projects WHERE id IN ({})", placeholders);
+        self.conn.execute(&sql, rusqlite::params_from_iter(missing_ids.iter()))?;
 
         Ok(missing_ids.len())
     }
@@ -281,17 +321,30 @@ impl Database {
         Ok(())
     }
 
-    /// Get embedded_text for a project by path (used for metadata-based boosting)
-    pub fn get_embedded_text(&self, path: &std::path::Path) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT pm.embedded_text FROM project_metadata pm
+    /// Batch fetch embedded_text for multiple projects (replaces N+1 single-query calls)
+    pub fn get_embedded_texts_batch(&self, paths: &[PathBuf]) -> Result<std::collections::HashMap<PathBuf, String>> {
+        if paths.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = paths.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT p.path, pm.embedded_text
+             FROM project_metadata pm
              JOIN projects p ON pm.project_id = p.id
-             WHERE p.path = ?",
-        )?;
-        let result = stmt
-            .query_row([path.to_string_lossy().as_ref()], |row| row.get(0))
-            .optional()?;
-        Ok(result)
+             WHERE p.path IN ({}) AND pm.embedded_text IS NOT NULL",
+            placeholders
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let path_strs: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let results = stmt.query_map(rusqlite::params_from_iter(path_strs.iter()), |row| {
+            Ok((PathBuf::from(row.get::<_, String>(0)?), row.get::<_, String>(1)?))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for result in results {
+            let (path, text) = result?;
+            map.insert(path, text);
+        }
+        Ok(map)
     }
 
     /// Store embedding for a project

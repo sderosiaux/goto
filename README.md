@@ -113,7 +113,8 @@ goto test
    ┌──────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
    │  Embed Query │  ──▶ │ L2 Distance Search  │  ──▶ │   Apply Boosting    │
    │   (384-dim)  │      │   (sqlite-vec)      │      │                     │
-   └──────────────┘      └─────────────────────┘      │  +20 name match     │
+   └──────────────┘      └─────────────────────┘      │  +40 exact name     │
+                                                      │  +20 name match     │
                                                       │  +10 metadata match │
                                                       └─────────────────────┘
                                                                  │
@@ -139,6 +140,7 @@ goto test
 
 ### Boosting Rules
 
+- **+40 points**: Project name exactly matches query
 - **+20 points**: All query words found in project name
 - **+10 points**: Query words found in embedded metadata text
 

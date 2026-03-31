@@ -103,11 +103,7 @@ fn get_git_status(path: &Path) -> Option<(String, bool)> {
 
 /// Show recently accessed projects
 fn show_recent(limit: usize, _config: &Config, db: &Database) -> Result<()> {
-    let mut projects = db.get_all_projects()?;
-
-    // Filter to only accessed projects and sort by recency
-    projects.retain(|p| p.access_count > 0);
-    projects.sort_by(|a, b| b.last_accessed.cmp(&a.last_accessed));
+    let projects = db.get_recent_projects(limit)?;
 
     if projects.is_empty() {
         eprintln!("\x1b[33m⚠\x1b[0m No recently accessed projects.");
@@ -117,7 +113,7 @@ fn show_recent(limit: usize, _config: &Config, db: &Database) -> Result<()> {
 
     eprintln!("\x1b[36mRecent projects:\x1b[0m\n");
 
-    for (i, project) in projects.iter().take(limit).enumerate() {
+    for (i, project) in projects.iter().enumerate() {
         let git_info = format_git_info(&project.path);
 
         eprintln!(
@@ -262,15 +258,17 @@ fn boost_and_sort_results(
     db: &Database,
 ) -> Vec<(Project, f32)> {
     let query_lower = query.to_lowercase();
+    let paths: Vec<std::path::PathBuf> = results.iter().map(|(p, _)| p.path.clone()).collect();
+    let embedded_texts = db.get_embedded_texts_batch(&paths).unwrap_or_default();
     let mut boosted: Vec<_> = results
         .into_iter()
         .map(|(project, score)| {
-            let embedded_text = db.get_embedded_text(&project.path).ok().flatten();
+            let embedded_text = embedded_texts.get(&project.path).map(|s| s.as_str());
             let boosted_score = calculate_boosted_score(
                 &project.name,
                 &query_lower,
                 score,
-                embedded_text.as_deref(),
+                embedded_text,
             );
             (project, boosted_score)
         })
@@ -280,22 +278,13 @@ fn boost_and_sort_results(
 }
 
 fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config: &Config, db: &Database) -> Result<()> {
-    let projects = db.get_all_projects()?;
-
-    if projects.is_empty() {
-        eprintln!("\x1b[31m✗\x1b[0m No projects indexed yet.");
-        eprintln!("  Run \x1b[1mgoto scan\x1b[0m to discover projects.");
-        std::process::exit(1);
-    }
-
-    // If show_all, just display semantic matches
+    // If show_all, delegate — handles empty case internally
     if show_all {
         return show_all_matches(query, limit, db);
     }
 
-    // Step 1: Check for exact name match (fast path)
-    let query_lower = query.to_lowercase();
-    if let Some(exact) = projects.iter().find(|p| p.name.to_lowercase() == query_lower) {
+    // Step 1: Exact name match via SQL (no full table scan)
+    if let Some(exact) = db.get_project_by_name(query)? {
         db.mark_accessed(&exact.path)?;
         println!("{}", exact.path.display());
         if !cd_only {
@@ -611,7 +600,7 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
 
     if projects.is_empty() {
         eprintln!("\x1b[31m✗\x1b[0m No projects indexed yet.");
-        eprintln!("  Run \x1b[1mgoto scan\x1b[0m to discover projects.");
+        eprintln!("  Run \x1b[1mgoto update\x1b[0m to discover projects.");
         return Ok(());
     }
 
