@@ -1,5 +1,5 @@
 [package]
-name = "goto"
+name = "goto-cli"
 version = "0.1.0"
 edition = "2021"
 description = "Quickly navigate to projects with semantic search"
@@ -11,6 +11,10 @@ keywords = ["cli", "navigation", "search", "productivity", "fuzzy"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 exclude = [".github", "hooks", "*.toml", "!Cargo.toml"]
+
+[[bin]]
+name = "goto"
+path = "src/main.rs"
 
 [dependencies]
 # CLI
