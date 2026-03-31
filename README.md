@@ -29,9 +29,16 @@ goto "cache rust"  # → /Users/you/code/foyer (semantic match!)
 
 ## Installation
 
+**One-liner** (no Rust required — downloads pre-built binary):
+
 ```bash
-git clone https://github.com/sderosiaux/goto.git
-cd goto && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/sderosiaux/goto/main/install.sh | bash
+```
+
+**Via cargo** (builds from source):
+
+```bash
+cargo install goto
 ```
 
 Then restart your terminal.

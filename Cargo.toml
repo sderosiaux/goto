@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "Quickly navigate to projects with semantic search"
 authors = ["sderosiaux"]
+license = "MIT"
+repository = "https://github.com/sderosiaux/goto"
+homepage = "https://github.com/sderosiaux/goto"
+keywords = ["cli", "navigation", "search", "productivity", "fuzzy"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+exclude = [".github", "hooks", "*.toml", "!Cargo.toml"]
 
 [dependencies]
 # CLI
