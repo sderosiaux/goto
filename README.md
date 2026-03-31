@@ -1,38 +1,20 @@
 # goto
 
-Fast project navigation with semantic search. Jump to any project instantly.
-
-> macOS only. Requires Spotlight for full project discovery.
-
-## Why?
-
-We all have dozens of project directories scattered across our filesystem:
+> Jump to any project instantly — semantic search for your filesystem.
 
 ```bash
-# The old way
-cd ~/code/work/team/some-project-i-forgot-the-exact-name
-# Wait, was it in ~/projects? Or ~/dev?
+goto "cache rust"    # → ~/code/foyer
+goto api             # → ~/projects/backend-api
+goto docs            # → ~/code/documentation
 ```
 
-`goto` indexes all your projects and lets you jump to them instantly:
+No more `cd ~/code/work/team/that-project-i-forgot`. `goto` indexes your projects and understands what they're *about*, not just what they're named.
 
-```bash
-goto docs          # → /Users/you/code/documentation
-goto api           # → /Users/you/projects/backend-api
-goto "cache rust"  # → /Users/you/code/foyer (semantic match!)
-```
+---
 
-## What it does
+## Install
 
-- **Hybrid search** — BM25 keyword search + vector similarity, merged via Reciprocal Rank Fusion
-- **Smart ranking** — Projects with matching names get boosted to the top
-- **Recent list** — `goto -` shows your last accessed projects
-- **Auto-indexing** — Background task keeps the index fresh every 5 minutes
-- **Fast** — Exact name matches are instant; search uses a local ML model (no network)
-
-## Installation
-
-**One-liner** (no Rust required):
+**One-liner** (no Rust required, macOS only):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sderosiaux/goto/main/install.sh | bash
@@ -44,131 +26,86 @@ curl -fsSL https://raw.githubusercontent.com/sderosiaux/goto/main/install.sh | b
 cargo install goto-cli
 ```
 
-Then restart your terminal.
-
-## Quick start
+Restart your terminal, then:
 
 ```bash
-# Tell goto where your projects live
-goto add ~/code
-goto add ~/projects
-
-# Index everything (downloads ~80MB model on first run)
-goto update
-
-# Jump to a project
-goto myproject
+goto add ~/code        # tell goto where your projects live
+goto update            # index everything (~80MB model download on first run)
+goto myproject         # jump!
 ```
+
+---
+
+## How it works
+
+### Indexing
+
+```mermaid
+flowchart LR
+    A[Project directory] --> B[Metadata extraction]
+    B --> C1[FTS5 index\nBM25 keyword]
+    B --> C2[E5 embeddings\n384-dim vectors]
+
+    subgraph B[Metadata extraction]
+        direction TB
+        S1[package.json / Cargo.toml\ndescription + keywords]
+        S2[README.md\nfirst paragraph]
+        S3[Build files\ntech stack detection]
+        S4[Source files\ntype + class names]
+    end
+```
+
+### Search
+
+```mermaid
+flowchart LR
+    Q[Query] --> V[Vector search\nsqlite-vec]
+    Q --> K[Keyword search\nFTS5 BM25]
+    V --> R[Reciprocal Rank\nFusion]
+    K --> R
+    R --> B[Name boosting\n+40 exact / +20 partial]
+    B --> Out[Ranked results]
+```
+
+---
 
 ## Usage
 
 ```bash
-goto <query>           # Jump to best match
-goto -a <query>        # Show all matches with scores
-goto -a -n 30 <query>  # Show more matches
-goto -                 # Show recently visited projects
-goto update            # Re-scan and re-index
-goto update --force    # Re-embed everything (slower)
-goto add ~/code        # Add a directory to scan
-goto remove ~/code     # Remove a directory
-goto list              # List all indexed projects
-goto stats             # Show access statistics
-goto config            # Show current configuration
-goto test              # Run ranking tests
+goto <query>            # jump to best match
+goto -a <query>         # show all matches with scores
+goto -a -n 30 <query>   # show more results
+goto -                  # recently visited projects
+goto update             # re-scan and re-index
+goto update --force     # re-embed everything
+goto add <path>         # add a directory to scan
+goto remove <path>      # remove a directory
+goto list               # list all indexed projects
+goto stats              # access statistics
+goto config             # show configuration
+goto test               # run ranking tests (~/.config/goto/tests.toml)
 ```
 
-## How it works
+---
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              INDEXING PHASE                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+## What gets indexed
 
-  ~/code/myproject/
-         │
-         ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          METADATA EXTRACTION                                │
-│                                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │ package.json │  │  README.md   │  │ Cargo.toml   │  │  src/*.rs    │    │
-│  │ Cargo.toml   │  │  (excerpt)   │  │ package.json │  │  src/*.ts    │    │
-│  │ pyproject    │  │              │  │ (tech stack) │  │  (types)     │    │
-│  │ (description)│  │              │  │              │  │              │    │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
-│         │                 │                 │                 │            │
-│         └─────────────────┴─────────────────┴─────────────────┘            │
-│                                     │                                       │
-│                                     ▼                                       │
-│            "myproject | Fast cache library | Rust, async |                  │
-│             Technologies: Rust | Type: backend | Structure: cache"          │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │                                        │
-         ▼                                        ▼
-┌─────────────────┐                   ┌───────────────────────┐
-│  FTS5 index     │                   │  MultilingualE5Small  │
-│  (BM25 keyword) │                   │  384-dim embeddings   │
-└─────────────────┘                   └───────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                               SEARCH PHASE                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-     "cache rust"
-          │
-          ├──────────────────────────────────────────┐
-          ▼                                          ▼
-  ┌──────────────────┐                    ┌────────────────────┐
-  │  Embed query     │                    │  BM25 keyword      │
-  │  Vector search   │                    │  FTS5 search       │
-  │  (sqlite-vec)    │                    │                    │
-  └────────┬─────────┘                    └─────────┬──────────┘
-           │                                        │
-           └──────────────────┬─────────────────────┘
-                              ▼
-                   ┌──────────────────────┐
-                   │  Reciprocal Rank     │
-                   │  Fusion (RRF)        │
-                   │  merged scores       │
-                   └──────────┬───────────┘
-                              │
-                              ▼
-                   ┌──────────────────────┐
-                   │  Apply Boosting      │
-                   │  +40 exact name      │
-                   │  +20 name match      │
-                   │  +10 metadata match  │
-                   └──────────┬───────────┘
-                              │
-                              ▼
-                   ┌──────────────────────┐
-                   │  1. foyer      (92)  │
-                   │  2. redis-cli  (78)  │
-                   │  3. cache-lib  (71)  │
-                   └──────────────────────┘
-```
-
-### Metadata sources
-
-| Source | Data extracted |
-|--------|----------------|
-| `package.json` / `Cargo.toml` / `pyproject.toml` | Description, keywords |
+| Source | Extracted |
+|--------|-----------|
+| `package.json`, `Cargo.toml`, `pyproject.toml` | Description, keywords |
 | `README.md` | First meaningful paragraph (up to 1500 chars) |
-| Build files | Tech stack detection (40+ frameworks/languages) |
+| Build files | Tech stack (40+ frameworks and languages) |
 | Directory structure | Semantic folder names |
-| Source files (top 10 by size) | Type/class/interface names |
+| Source files (top 10 by size) | Type, class, interface names |
 
-### Boosting rules
-
-- **+40** — Project name exactly matches query
-- **+20** — All query words found in project name
-- **+10** — Query words found in indexed metadata
+---
 
 ## Requirements
 
-- macOS (uses Spotlight via `mdfind` for project discovery)
-- First `goto update` downloads ~80MB embedding model to `~/Library/Caches/dev.goto.goto/`
+- macOS — uses Spotlight (`mdfind`) for project discovery
+- First run downloads ~80MB embedding model to `~/Library/Caches/dev.goto.goto/`
+
+---
 
 ## License
 
