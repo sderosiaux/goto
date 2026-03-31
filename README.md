@@ -1,4 +1,11 @@
+![goto banner](assets/banner.png)
+
 # goto
+
+[![Crates.io](https://img.shields.io/crates/v/goto-cli.svg)](https://crates.io/crates/goto-cli)
+[![Build](https://github.com/sderosiaux/goto/actions/workflows/release.yml/badge.svg)](https://github.com/sderosiaux/goto/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 
 > Jump to any project instantly — semantic search for your filesystem.
 
@@ -14,7 +21,7 @@ No more `cd ~/code/work/team/that-project-i-forgot`. `goto` indexes your project
 
 ## Install
 
-**One-liner** (no Rust required, macOS only):
+**One-liner** (no Rust required):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sderosiaux/goto/main/install.sh | bash
@@ -38,34 +45,9 @@ goto myproject         # jump!
 
 ## How it works
 
-### Indexing
+When you run `goto update`, it scans your configured directories and extracts metadata from each project: the description from `package.json` or `Cargo.toml`, the opening paragraph of the README, detected tech stack, directory structure, and type/class names from the largest source files. All of that gets stored in two indexes: a **BM25 full-text index** (FTS5) for keyword matching, and a **384-dim vector index** (sqlite-vec) for semantic similarity using a local `MultilingualE5Small` model (~80MB, runs fully offline).
 
-```mermaid
-flowchart LR
-    A[Project directory] --> B[Metadata extraction]
-    B --> C1[FTS5 index\nBM25 keyword]
-    B --> C2[E5 embeddings\n384-dim vectors]
-
-    subgraph B[Metadata extraction]
-        direction TB
-        S1[package.json / Cargo.toml\ndescription + keywords]
-        S2[README.md\nfirst paragraph]
-        S3[Build files\ntech stack detection]
-        S4[Source files\ntype + class names]
-    end
-```
-
-### Search
-
-```mermaid
-flowchart LR
-    Q[Query] --> V[Vector search\nsqlite-vec]
-    Q --> K[Keyword search\nFTS5 BM25]
-    V --> R[Reciprocal Rank\nFusion]
-    K --> R
-    R --> B[Name boosting\n+40 exact / +20 partial]
-    B --> Out[Ranked results]
-```
+At search time, both indexes are queried in parallel and their ranked results are merged using **Reciprocal Rank Fusion**. The final scores get a boost if the query matches the project name exactly (+40), partially (+20), or appears in the metadata (+10). The best match above the 55% threshold is returned and you get `cd`'d there automatically.
 
 ---
 
@@ -85,18 +67,6 @@ goto stats              # access statistics
 goto config             # show configuration
 goto test               # run ranking tests (~/.config/goto/tests.toml)
 ```
-
----
-
-## What gets indexed
-
-| Source | Extracted |
-|--------|-----------|
-| `package.json`, `Cargo.toml`, `pyproject.toml` | Description, keywords |
-| `README.md` | First meaningful paragraph (up to 1500 chars) |
-| Build files | Tech stack (40+ frameworks and languages) |
-| Directory structure | Semantic folder names |
-| Source files (top 10 by size) | Type, class, interface names |
 
 ---
 
