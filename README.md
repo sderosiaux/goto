@@ -72,8 +72,9 @@ goto test               # run ranking tests (~/.config/goto/tests.toml)
 
 ## Requirements
 
-- macOS — uses Spotlight (`mdfind`) for project discovery
+- macOS
 - First run downloads ~80MB embedding model to `~/Library/Caches/dev.goto.goto/`
+- Spotlight (`mdfind`) is optional but recommended for broader project discovery
 
 ---
 
