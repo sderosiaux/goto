@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/sderosiaux/goto/main/install.sh | b
 **Via cargo** (builds from source):
 
 ```bash
-cargo install goto
+cargo install goto-cli
 ```
 
 Then restart your terminal.
