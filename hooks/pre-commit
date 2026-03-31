@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+# Format check
+if ! cargo fmt --check 2>/dev/null; then
+    echo "❌ Format issues found. Run: cargo fmt"
+    exit 1
+fi
+
+# Lint (all configured lints in Cargo.toml [lints] become errors)
+if ! cargo clippy --all-targets -- -D warnings 2>&1; then
+    echo "❌ Clippy errors found."
+    exit 1
+fi
+
+echo "✓ fmt + clippy passed"

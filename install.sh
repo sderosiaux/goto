@@ -47,6 +47,13 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     fi
 fi
 
+# Install git pre-commit hook (if inside a git repo)
+if [ -d "$SCRIPT_DIR/.git" ]; then
+    cp "$SCRIPT_DIR/hooks/pre-commit" "$SCRIPT_DIR/.git/hooks/pre-commit"
+    chmod +x "$SCRIPT_DIR/.git/hooks/pre-commit"
+    echo "Installed pre-commit hook (fmt + clippy)"
+fi
+
 echo ""
 echo "Installation complete!"
 echo ""

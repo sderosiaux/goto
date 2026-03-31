@@ -75,10 +75,7 @@ impl<'a> Scanner<'a> {
                 !exclude_patterns.iter().any(|p| name.contains(p))
             })
         {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
+            let Ok(entry) = entry else { continue };
 
             if !entry.file_type().is_dir() {
                 continue;
@@ -97,16 +94,16 @@ impl<'a> Scanner<'a> {
         // Post-process: find non-git leaf dirs with files
         let mut non_git_projects = Vec::new();
         for dir_path in &candidate_dirs {
-            if git_projects.contains(dir_path) || git_projects.iter().any(|gp| dir_path.starts_with(gp)) {
+            if git_projects.contains(dir_path)
+                || git_projects.iter().any(|gp| dir_path.starts_with(gp))
+            {
                 continue;
             }
             if let Ok(contents) = std::fs::read_dir(dir_path) {
-                let has_files = contents
-                    .filter_map(|e| e.ok())
-                    .any(|e| {
-                        e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
-                            && !e.file_name().to_string_lossy().starts_with('.')
-                    });
+                let has_files = contents.filter_map(std::result::Result::ok).any(|e| {
+                    e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                        && !e.file_name().to_string_lossy().starts_with('.')
+                });
                 if has_files {
                     non_git_projects.push(dir_path.clone());
                 }
@@ -116,12 +113,17 @@ impl<'a> Scanner<'a> {
         // Keep only leaf dirs (no child dir also in non_git_projects)
         let filtered_non_git: Vec<_> = non_git_projects
             .iter()
-            .filter(|path| !non_git_projects.iter().any(|other| other != *path && other.starts_with(*path)))
+            .filter(|path| {
+                !non_git_projects
+                    .iter()
+                    .any(|other| other != *path && other.starts_with(*path))
+            })
             .cloned()
             .collect();
 
         projects_to_add.extend(filtered_non_git);
-        self.db.upsert_projects_batch(&projects_to_add, ProjectSource::Scan)
+        self.db
+            .upsert_projects_batch(&projects_to_add, ProjectSource::Scan)
     }
 
     /// Scan for git repositories using macOS Spotlight (mdfind)
@@ -142,15 +144,15 @@ impl<'a> Scanner<'a> {
             "CMakeLists.txt",
             "Makefile",
             // Documentation projects
-            "docs.json",      // Mintlify
-            "mkdocs.yml",     // MkDocs
+            "docs.json",            // Mintlify
+            "mkdocs.yml",           // MkDocs
             "docusaurus.config.js", // Docusaurus
         ];
 
         // Build single compound OR query (9x faster than 9 separate queries)
         let query = markers
             .iter()
-            .map(|m| format!("kMDItemFSName == '{}'", m))
+            .map(|m| format!("kMDItemFSName == '{m}'"))
             .collect::<Vec<_>>()
             .join(" || ");
 
@@ -200,7 +202,12 @@ impl<'a> Scanner<'a> {
 
                     // Skip if path matches any exclude pattern
                     let path_str = project_dir.to_string_lossy();
-                    if self.config.exclude_patterns.iter().any(|p| path_str.contains(p)) {
+                    if self
+                        .config
+                        .exclude_patterns
+                        .iter()
+                        .any(|p| path_str.contains(p))
+                    {
                         continue;
                     }
 
@@ -211,7 +218,8 @@ impl<'a> Scanner<'a> {
         }
 
         // Batch insert for performance
-        self.db.upsert_projects_batch(&projects_to_add, ProjectSource::Spotlight)
+        self.db
+            .upsert_projects_batch(&projects_to_add, ProjectSource::Spotlight)
     }
 }
 

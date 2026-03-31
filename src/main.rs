@@ -33,31 +33,22 @@ fn main() -> Result<()> {
     }
 
     match cli.command {
-        Some(Commands::Recent { limit }) => {
-            show_recent(limit, &config, &db)
-        }
-        Some(Commands::Stats) => {
-            show_stats(&db)
-        }
-        Some(Commands::Update { force }) => {
-            update_all(force, &config, &mut db)
-        }
-        Some(Commands::List { sort, limit, all, git }) => {
+        Some(Commands::Recent { limit }) => show_recent(limit, &config, &db),
+        Some(Commands::Stats) => show_stats(&db),
+        Some(Commands::Update { force }) => update_all(force, &config, &mut db),
+        Some(Commands::List {
+            sort,
+            limit,
+            all,
+            git,
+        }) => {
             let actual_limit = if all { usize::MAX } else { limit };
             list_projects(sort, actual_limit, git, &db)
         }
-        Some(Commands::Add { path }) => {
-            add_path(path, &mut Config::load()?)
-        }
-        Some(Commands::Remove { path }) => {
-            remove_path(path, &mut Config::load()?)
-        }
-        Some(Commands::Config) => {
-            show_config(&config)
-        }
-        Some(Commands::Test) => {
-            run_tests(&db)
-        }
+        Some(Commands::Add { path }) => add_path(path, &mut Config::load()?),
+        Some(Commands::Remove { path }) => remove_path(path, &mut Config::load()?),
+        Some(Commands::Config) => show_config(&config),
+        Some(Commands::Test) => run_tests(&db),
         None => {
             // No command and no query - show help hint
             eprintln!("\x1b[33mUsage:\x1b[0m goto <query> or goto --help for more options");
@@ -71,7 +62,7 @@ fn format_git_info(path: &Path) -> String {
     get_git_status(path)
         .map(|(branch, dirty)| {
             let dirty_marker = if dirty { "\x1b[31m*\x1b[0m" } else { "" };
-            format!(" \x1b[33m{}\x1b[0m{}", branch, dirty_marker)
+            format!(" \x1b[33m{branch}\x1b[0m{dirty_marker}")
         })
         .unwrap_or_default()
 }
@@ -80,7 +71,13 @@ fn format_git_info(path: &Path) -> String {
 fn get_git_status(path: &Path) -> Option<(String, bool)> {
     // Get current branch
     let branch_output = Command::new("git")
-        .args(["-C", &path.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .args([
+            "-C",
+            &path.to_string_lossy(),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ])
         .output()
         .ok()?;
 
@@ -88,7 +85,9 @@ fn get_git_status(path: &Path) -> Option<(String, bool)> {
         return None;
     }
 
-    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+    let branch = String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .to_string();
 
     // Check if dirty (has uncommitted changes)
     let status_output = Command::new("git")
@@ -146,7 +145,8 @@ fn show_stats(db: &Database) -> Result<()> {
 
     // Projects accessed in last 7 days
     let week_ago = Utc::now() - Duration::days(7);
-    let active_this_week: Vec<&Project> = accessed.iter()
+    let active_this_week: Vec<&Project> = accessed
+        .iter()
         .filter(|p| p.last_accessed > week_ago)
         .copied()
         .collect();
@@ -156,18 +156,20 @@ fn show_stats(db: &Database) -> Result<()> {
     by_access.sort_by(|a, b| b.access_count.cmp(&a.access_count));
 
     eprintln!("\x1b[36mProject Statistics\x1b[0m\n");
-    eprintln!("  \x1b[90mTotal indexed:\x1b[0m     {}", total);
+    eprintln!("  \x1b[90mTotal indexed:\x1b[0m     {total}");
     eprintln!("  \x1b[90mEver accessed:\x1b[0m     {}", accessed.len());
-    eprintln!("  \x1b[90mActive this week:\x1b[0m  {}", active_this_week.len());
-    eprintln!("  \x1b[90mTotal navigations:\x1b[0m {}", total_accesses);
+    eprintln!(
+        "  \x1b[90mActive this week:\x1b[0m  {}",
+        active_this_week.len()
+    );
+    eprintln!("  \x1b[90mTotal navigations:\x1b[0m {total_accesses}");
 
     if !by_access.is_empty() && by_access[0].access_count > 0 {
         eprintln!("\n\x1b[36mMost accessed:\x1b[0m\n");
         for project in by_access.iter().take(5).filter(|p| p.access_count > 0) {
             eprintln!(
                 "  \x1b[32m{:>3}x\x1b[0m \x1b[1m{}\x1b[0m",
-                project.access_count,
-                project.name
+                project.access_count, project.name
             );
         }
     }
@@ -176,11 +178,14 @@ fn show_stats(db: &Database) -> Result<()> {
         eprintln!("\n\x1b[36mActive this week:\x1b[0m\n");
         for project in active_this_week.iter().take(5) {
             let days_ago = (Utc::now() - project.last_accessed).num_days();
-            let when = if days_ago == 0 { "today".to_string() } else { format!("{}d ago", days_ago) };
+            let when = if days_ago == 0 {
+                "today".to_string()
+            } else {
+                format!("{days_ago}d ago")
+            };
             eprintln!(
                 "  \x1b[90m{:>6}\x1b[0m \x1b[1m{}\x1b[0m",
-                when,
-                project.name
+                when, project.name
             );
         }
     }
@@ -263,13 +268,11 @@ fn boost_and_sort_results(
     let mut boosted: Vec<_> = results
         .into_iter()
         .map(|(project, score)| {
-            let embedded_text = embedded_texts.get(&project.path).map(|s| s.as_str());
-            let boosted_score = calculate_boosted_score(
-                &project.name,
-                &query_lower,
-                score,
-                embedded_text,
-            );
+            let embedded_text = embedded_texts
+                .get(&project.path)
+                .map(std::string::String::as_str);
+            let boosted_score =
+                calculate_boosted_score(&project.name, &query_lower, score, embedded_text);
             (project, boosted_score)
         })
         .collect();
@@ -277,7 +280,14 @@ fn boost_and_sort_results(
     boosted
 }
 
-fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config: &Config, db: &Database) -> Result<()> {
+fn find_project(
+    query: &str,
+    show_all: bool,
+    limit: usize,
+    cd_only: bool,
+    config: &Config,
+    db: &Database,
+) -> Result<()> {
     // If show_all, delegate — handles empty case internally
     if show_all {
         return show_all_matches(query, limit, db);
@@ -289,7 +299,7 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
         println!("{}", exact.path.display());
         if !cd_only {
             if let Some(cmd) = &config.post_command {
-                eprintln!("__GOTO_POST_CMD__:{}", cmd);
+                eprintln!("__GOTO_POST_CMD__:{cmd}");
             }
         }
         return Ok(());
@@ -298,34 +308,31 @@ fn find_project(query: &str, show_all: bool, limit: usize, cd_only: bool, config
     // Step 2: Use semantic search
     let best = find_best_match(query, db)?;
 
-    match best {
-        Some(result) => {
-            // Mark as accessed
-            db.mark_accessed(&result.project.path)?;
+    if let Some(result) = best {
+        // Mark as accessed
+        db.mark_accessed(&result.project.path)?;
 
-            // Output path for the shell function to cd to
-            println!("{}", result.project.path.display());
+        // Output path for the shell function to cd to
+        println!("{}", result.project.path.display());
 
-            // Show match info on stderr (doesn't interfere with path)
-            if result.is_semantic {
-                eprintln!(
-                    "\x1b[35m◆\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m(semantic: {:.0}%)\x1b[0m",
-                    result.project.name, result.score
-                );
-            }
+        // Show match info on stderr (doesn't interfere with path)
+        if result.is_semantic {
+            eprintln!(
+                "\x1b[35m◆\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m(semantic: {:.0}%)\x1b[0m",
+                result.project.name, result.score
+            );
+        }
 
-            // Output post command if configured
-            if !cd_only {
-                if let Some(cmd) = &config.post_command {
-                    eprintln!("__GOTO_POST_CMD__:{}", cmd);
-                }
+        // Output post command if configured
+        if !cd_only {
+            if let Some(cmd) = &config.post_command {
+                eprintln!("__GOTO_POST_CMD__:{cmd}");
             }
         }
-        None => {
-            eprintln!("\x1b[31m✗\x1b[0m No projects matching '\x1b[1m{query}\x1b[0m'");
-            eprintln!("  Try a different query or run \x1b[1mgoto list\x1b[0m to see all projects.");
-            std::process::exit(1);
-        }
+    } else {
+        eprintln!("\x1b[31m✗\x1b[0m No projects matching '\x1b[1m{query}\x1b[0m'");
+        eprintln!("  Try a different query or run \x1b[1mgoto list\x1b[0m to see all projects.");
+        std::process::exit(1);
     }
 
     Ok(())
@@ -343,10 +350,10 @@ fn find_best_match(query: &str, db: &Database) -> Result<Option<SearchResult>> {
         let boosted = boost_and_sort_results(results, query, db);
 
         if let Some((project, score)) = boosted.into_iter().next() {
-            if score as f64 >= SEMANTIC_MIN_THRESHOLD {
+            if f64::from(score) >= SEMANTIC_MIN_THRESHOLD {
                 return Ok(Some(SearchResult {
                     project,
-                    score: score as f64,
+                    score: f64::from(score),
                     is_semantic: true,
                 }));
             }
@@ -409,7 +416,9 @@ struct TestCase {
     top_n: usize,
 }
 
-fn default_top_n() -> usize { 3 }
+fn default_top_n() -> usize {
+    3
+}
 
 #[derive(Debug, serde::Deserialize)]
 struct TestFile {
@@ -429,7 +438,11 @@ fn run_single_test<'a>(test: &'a TestCase, db: &Database) -> Result<TestResult<'
     let results = semantic::semantic_search(db, &test.query, 20)?;
     let boosted = boost_and_sort_results(results, &test.query, db);
 
-    let top_names: Vec<_> = boosted.iter().take(test.top_n).map(|(p, _)| &p.name).collect();
+    let top_names: Vec<_> = boosted
+        .iter()
+        .take(test.top_n)
+        .map(|(p, _)| &p.name)
+        .collect();
 
     let mut found = Vec::new();
     let mut missing = Vec::new();
@@ -457,7 +470,10 @@ fn run_single_test<'a>(test: &'a TestCase, db: &Database) -> Result<TestResult<'
 }
 
 /// Create example test file if it doesn't exist
-fn create_example_test_file(config_dir: &std::path::Path, test_file: &std::path::Path) -> Result<()> {
+fn create_example_test_file(
+    config_dir: &std::path::Path,
+    test_file: &std::path::Path,
+) -> Result<()> {
     let example = r#"# Ranking tests - run with: goto test
 # Each test checks if expected projects appear in top N results
 
@@ -478,16 +494,20 @@ top_n = 5
 "#;
     std::fs::create_dir_all(config_dir)?;
     std::fs::write(test_file, example)?;
-    eprintln!("\x1b[32m✓\x1b[0m Created example test file: {}", test_file.display());
+    eprintln!(
+        "\x1b[32m✓\x1b[0m Created example test file: {}",
+        test_file.display()
+    );
     eprintln!("  Edit it and run \x1b[1mgoto test\x1b[0m again");
     Ok(())
 }
 
 /// Run ranking tests from config file
 fn run_tests(db: &Database) -> Result<()> {
-    let config_dir = directories::ProjectDirs::from("", "", "goto")
-        .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config/goto"));
+    let config_dir = directories::ProjectDirs::from("", "", "goto").map_or_else(
+        || dirs::home_dir().unwrap().join(".config/goto"),
+        |d| d.config_dir().to_path_buf(),
+    );
 
     let test_file = config_dir.join("tests.toml");
 
@@ -516,7 +536,7 @@ fn run_tests(db: &Database) -> Result<()> {
             eprintln!(
                 "\x1b[32m✓\x1b[0m \"{}\" → {} \x1b[90m(found: {})\x1b[0m",
                 test.query,
-                result.top_results.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                result.top_results.first().map_or("?", |(n, _)| n.as_str()),
                 result.found.join(", ")
             );
         } else {
@@ -524,7 +544,7 @@ fn run_tests(db: &Database) -> Result<()> {
             eprintln!(
                 "\x1b[31m✗\x1b[0m \"{}\" → {} \x1b[90m(missing: {})\x1b[0m",
                 test.query,
-                result.top_results.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                result.top_results.first().map_or("?", |(n, _)| n.as_str()),
                 result.missing.join(", ")
             );
             for (i, (name, score)) in result.top_results.iter().enumerate() {
@@ -535,9 +555,13 @@ fn run_tests(db: &Database) -> Result<()> {
 
     eprintln!();
     if failed == 0 {
-        eprintln!("\x1b[32m✓ All {} tests passed\x1b[0m", passed);
+        eprintln!("\x1b[32m✓ All {passed} tests passed\x1b[0m");
     } else {
-        eprintln!("\x1b[31m✗ {}/{} tests failed\x1b[0m", failed, passed + failed);
+        eprintln!(
+            "\x1b[31m✗ {}/{} tests failed\x1b[0m",
+            failed,
+            passed + failed
+        );
         std::process::exit(1);
     }
 
@@ -571,7 +595,7 @@ fn update_all(force: bool, config: &Config, db: &mut Database) -> Result<()> {
     let count = semantic::index_projects(db)?;
 
     if count > 0 {
-        eprintln!("\x1b[32m✓\x1b[0m Indexed \x1b[1m{}\x1b[0m projects for semantic search", count);
+        eprintln!("\x1b[32m✓\x1b[0m Indexed \x1b[1m{count}\x1b[0m projects for semantic search");
     } else {
         eprintln!("\x1b[32m✓\x1b[0m All projects already indexed");
     }
@@ -605,10 +629,18 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
     }
 
     let total = projects.len();
-    eprintln!("\x1b[36mProjects\x1b[0m (showing {}/{}):\n", std::cmp::min(limit, total), total);
+    eprintln!(
+        "\x1b[36mProjects\x1b[0m (showing {}/{}):\n",
+        std::cmp::min(limit, total),
+        total
+    );
 
     for project in projects.iter().take(limit) {
-        let git_info = if show_git { format_git_info(&project.path) } else { String::new() };
+        let git_info = if show_git {
+            format_git_info(&project.path)
+        } else {
+            String::new()
+        };
 
         println!(
             "  \x1b[1m{}\x1b[0m{} \x1b[90m{}\x1b[0m",
@@ -624,35 +656,60 @@ fn list_projects(sort: SortOrder, limit: usize, show_git: bool, db: &Database) -
 fn add_path(path: std::path::PathBuf, config: &mut Config) -> Result<()> {
     let canonical = path.canonicalize()?;
     config.add_path(canonical.clone())?;
-    eprintln!("\x1b[32m✓\x1b[0m Added \x1b[1m{}\x1b[0m to scan paths", canonical.display());
+    eprintln!(
+        "\x1b[32m✓\x1b[0m Added \x1b[1m{}\x1b[0m to scan paths",
+        canonical.display()
+    );
 
     // Scan the path immediately
     let mut db = Database::open()?;
     let mut scanner = Scanner::new(config, &mut db);
     eprintln!("\x1b[36m⏳\x1b[0m Scanning...");
     let result = scanner.scan_paths_only()?;
-    eprintln!("\x1b[32m✓\x1b[0m Found \x1b[1m{}\x1b[0m projects", result.from_paths);
+    eprintln!(
+        "\x1b[32m✓\x1b[0m Found \x1b[1m{}\x1b[0m projects",
+        result.from_paths
+    );
 
     Ok(())
 }
 
 fn remove_path(path: std::path::PathBuf, config: &mut Config) -> Result<()> {
     if config.remove_path(&path)? {
-        eprintln!("\x1b[32m✓\x1b[0m Removed \x1b[1m{}\x1b[0m from scan paths", path.display());
+        eprintln!(
+            "\x1b[32m✓\x1b[0m Removed \x1b[1m{}\x1b[0m from scan paths",
+            path.display()
+        );
     } else {
-        eprintln!("\x1b[33m⚠\x1b[0m Path \x1b[1m{}\x1b[0m was not in the scan list", path.display());
+        eprintln!(
+            "\x1b[33m⚠\x1b[0m Path \x1b[1m{}\x1b[0m was not in the scan list",
+            path.display()
+        );
     }
     Ok(())
 }
 
 fn show_config(config: &Config) -> Result<()> {
     eprintln!("\x1b[36mConfiguration\x1b[0m\n");
-    eprintln!("  \x1b[90mConfig file:\x1b[0m {}", Config::config_path()?.display());
-    eprintln!("  \x1b[90mDatabase:\x1b[0m    {}", Config::db_path()?.display());
+    eprintln!(
+        "  \x1b[90mConfig file:\x1b[0m {}",
+        Config::config_path()?.display()
+    );
+    eprintln!(
+        "  \x1b[90mDatabase:\x1b[0m    {}",
+        Config::db_path()?.display()
+    );
     eprintln!();
 
-    let spotlight_status = if config.use_spotlight { "\x1b[32m✓\x1b[0m" } else { "\x1b[31m✗\x1b[0m" };
-    eprintln!("  {} \x1b[1mSpotlight:\x1b[0m {}", spotlight_status, config.use_spotlight);
+    let spotlight_status = if config.use_spotlight {
+        "\x1b[32m✓\x1b[0m"
+    } else {
+        "\x1b[31m✗\x1b[0m"
+    };
+    eprintln!(
+        "  {} \x1b[1mSpotlight:\x1b[0m {}",
+        spotlight_status, config.use_spotlight
+    );
     eprintln!("  \x1b[90mSpotlight paths:\x1b[0m");
     for path in &config.spotlight_paths {
         eprintln!("    \x1b[90m•\x1b[0m {}", path.display());
@@ -668,8 +725,13 @@ fn show_config(config: &Config) -> Result<()> {
     }
     eprintln!();
     eprintln!("  \x1b[90mMax depth:\x1b[0m    {}", config.max_depth);
-    eprintln!("  \x1b[90mPost command:\x1b[0m {}", config.post_command.as_deref().unwrap_or("\x1b[90m(none)\x1b[0m"));
+    eprintln!(
+        "  \x1b[90mPost command:\x1b[0m {}",
+        config
+            .post_command
+            .as_deref()
+            .unwrap_or("\x1b[90m(none)\x1b[0m")
+    );
 
     Ok(())
 }
-

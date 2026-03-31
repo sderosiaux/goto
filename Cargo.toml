@@ -38,6 +38,29 @@ thiserror = "2"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Intentional: score values, row counts, rank indices — precision loss is acceptable
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+# CLI tool, not a published library
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+# PathBuf args come from clap (owned), passing by value is correct at the CLI boundary
+needless_pass_by_value = "allow"
+# Short names are idiomatic in Rust (tx, db, e, m, ...)
+similar_names = "allow"
+# Doc comment backticks
+doc_markdown = "allow"
+# Function size — acceptable for the CLI dispatcher
+too_many_lines = "allow"
+
 [profile.release]
 opt-level = 3
 lto = true

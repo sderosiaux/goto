@@ -129,8 +129,9 @@ impl Config {
         let config_path = Self::config_path()?;
 
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory: {}", parent.display())
+            })?;
         }
 
         let content = toml::to_string_pretty(self)?;
@@ -142,7 +143,8 @@ impl Config {
 
     /// Add a path to scan_paths
     pub fn add_path(&mut self, path: PathBuf) -> Result<()> {
-        let canonical = path.canonicalize()
+        let canonical = path
+            .canonicalize()
             .with_context(|| format!("Path does not exist: {}", path.display()))?;
 
         if !self.scan_paths.contains(&canonical) {
@@ -158,11 +160,11 @@ impl Config {
         let initial_len = self.scan_paths.len();
         self.scan_paths.retain(|p| p != &canonical && p != path);
 
-        if self.scan_paths.len() != initial_len {
+        if self.scan_paths.len() == initial_len {
+            Ok(false)
+        } else {
             self.save()?;
             Ok(true)
-        } else {
-            Ok(false)
         }
     }
 }

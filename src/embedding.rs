@@ -38,9 +38,8 @@ fn init_model() -> Result<TextEmbedding> {
 
 /// Generate embedding for a single text
 pub fn embed_text(text: &str) -> Result<Vec<f32>> {
-    let model_mutex = MODEL.get_or_init(|| {
-        Mutex::new(init_model().expect("Failed to initialize embedding model"))
-    });
+    let model_mutex = MODEL
+        .get_or_init(|| Mutex::new(init_model().expect("Failed to initialize embedding model")));
 
     let mut model = model_mutex
         .lock()
@@ -62,9 +61,8 @@ pub fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
         return Ok(vec![]);
     }
 
-    let model_mutex = MODEL.get_or_init(|| {
-        Mutex::new(init_model().expect("Failed to initialize embedding model"))
-    });
+    let model_mutex = MODEL
+        .get_or_init(|| Mutex::new(init_model().expect("Failed to initialize embedding model")));
 
     let mut model = model_mutex
         .lock()
@@ -74,4 +72,3 @@ pub fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
         .embed(texts, None)
         .context("Failed to generate embeddings")
 }
-

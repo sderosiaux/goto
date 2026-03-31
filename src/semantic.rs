@@ -14,41 +14,133 @@ const README_MAX_CHARS: usize = 1500;
 /// Generic directory names to skip (not semantically meaningful)
 const GENERIC_DIRS: &[&str] = &[
     // Build/structure
-    "src", "lib", "bin", "cmd", "pkg", "app", "apps",
-    "main", "java", "kotlin", "scala", "resources",
-    "test", "tests", "spec", "specs", "integration",
+    "src",
+    "lib",
+    "bin",
+    "cmd",
+    "pkg",
+    "app",
+    "apps",
+    "main",
+    "java",
+    "kotlin",
+    "scala",
+    "resources",
+    "test",
+    "tests",
+    "spec",
+    "specs",
+    "integration",
     // Package prefixes (very common, not semantic)
-    "com", "org", "io", "net", "dev", "github",
+    "com",
+    "org",
+    "io",
+    "net",
+    "dev",
+    "github",
     // Generic code organization
-    "impl", "internal", "api", "core", "base",
-    "util", "utils", "helper", "helpers", "common", "shared",
-    "model", "models", "entity", "entities", "dto", "dtos",
-    "service", "services", "controller", "controllers",
-    "repository", "repositories", "dao", "daos",
+    "impl",
+    "internal",
+    "api",
+    "core",
+    "base",
+    "util",
+    "utils",
+    "helper",
+    "helpers",
+    "common",
+    "shared",
+    "model",
+    "models",
+    "entity",
+    "entities",
+    "dto",
+    "dtos",
+    "service",
+    "services",
+    "controller",
+    "controllers",
+    "repository",
+    "repositories",
+    "dao",
+    "daos",
     // Build output
-    "build", "dist", "target", "out", "output", "gen", "generated",
+    "build",
+    "dist",
+    "target",
+    "out",
+    "output",
+    "gen",
+    "generated",
     // Dependencies
-    "vendor", "node_modules", "deps", "dependencies", "third_party",
+    "vendor",
+    "node_modules",
+    "deps",
+    "dependencies",
+    "third_party",
     // Assets/config
-    "assets", "public", "static", "resources", "config", "configs",
-    "scripts", "tools", "templates", "fixtures",
+    "assets",
+    "public",
+    "static",
+    "resources",
+    "config",
+    "configs",
+    "scripts",
+    "tools",
+    "templates",
+    "fixtures",
     // Documentation
-    "docs", "doc", "documentation", "examples", "samples", "demo",
+    "docs",
+    "doc",
+    "documentation",
+    "examples",
+    "samples",
+    "demo",
     // Meta
-    "META-INF", "WEB-INF",
+    "META-INF",
+    "WEB-INF",
 ];
 
 /// Generic type names to skip
 const GENERIC_TYPES: &[&str] = &[
-    "App", "Main", "Application", "Program",
-    "Config", "Configuration", "Options", "Settings", "Properties",
-    "Utils", "Util", "Helper", "Helpers", "Common",
-    "Handler", "Manager", "Service", "Factory", "Builder", "Provider",
-    "Context", "State", "Store", "Cache",
-    "Error", "Exception", "Result",
-    "Test", "Tests", "Spec", "Mock",
-    "Base", "Abstract", "Default", "Simple", "Basic",
-    "Impl", "Implementation",
+    "App",
+    "Main",
+    "Application",
+    "Program",
+    "Config",
+    "Configuration",
+    "Options",
+    "Settings",
+    "Properties",
+    "Utils",
+    "Util",
+    "Helper",
+    "Helpers",
+    "Common",
+    "Handler",
+    "Manager",
+    "Service",
+    "Factory",
+    "Builder",
+    "Provider",
+    "Context",
+    "State",
+    "Store",
+    "Cache",
+    "Error",
+    "Exception",
+    "Result",
+    "Test",
+    "Tests",
+    "Spec",
+    "Mock",
+    "Base",
+    "Abstract",
+    "Default",
+    "Simple",
+    "Basic",
+    "Impl",
+    "Implementation",
 ];
 
 /// Source file extensions to scan for types
@@ -111,15 +203,25 @@ fn derive_semantic_hints(tech_stack: &[String]) -> Vec<&'static str> {
     let mut hints = Vec::new();
 
     // Backend indicators
-    let backend_techs = ["Scala", "Java", "Kotlin", "Go", "Rust", "Python", "Ruby", "PHP", "Elixir", "C#", "F#"];
-    let has_backend = tech_stack.iter().any(|t| backend_techs.contains(&t.as_str()));
+    let backend_techs = [
+        "Scala", "Java", "Kotlin", "Go", "Rust", "Python", "Ruby", "PHP", "Elixir", "C#", "F#",
+    ];
+    let has_backend = tech_stack
+        .iter()
+        .any(|t| backend_techs.contains(&t.as_str()));
 
     // Frontend indicators
-    let frontend_techs = ["Next.js", "Nuxt", "Vite", "Astro", "Svelte", "Angular", "Vue", "Tailwind"];
-    let has_frontend = tech_stack.iter().any(|t| frontend_techs.contains(&t.as_str()));
+    let frontend_techs = [
+        "Next.js", "Nuxt", "Vite", "Astro", "Svelte", "Angular", "Vue", "Tailwind",
+    ];
+    let has_frontend = tech_stack
+        .iter()
+        .any(|t| frontend_techs.contains(&t.as_str()));
 
     // Check for web-specific patterns
-    let is_web_app = tech_stack.iter().any(|t| matches!(t.as_str(), "JavaScript" | "TypeScript"));
+    let is_web_app = tech_stack
+        .iter()
+        .any(|t| matches!(t.as_str(), "JavaScript" | "TypeScript"));
 
     // Determine type
     if has_frontend || (is_web_app && !has_backend) {
@@ -135,7 +237,10 @@ fn derive_semantic_hints(tech_stack: &[String]) -> Vec<&'static str> {
     }
 
     // Infrastructure
-    if tech_stack.iter().any(|t| matches!(t.as_str(), "Docker" | "Kubernetes" | "Terraform" | "Pulumi")) {
+    if tech_stack
+        .iter()
+        .any(|t| matches!(t.as_str(), "Docker" | "Kubernetes" | "Terraform" | "Pulumi"))
+    {
         hints.push("infrastructure");
         hints.push("devops");
     }
@@ -172,7 +277,7 @@ fn extract_structure_hints(path: &Path) -> Vec<String> {
         .max_depth(6)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
     {
         if !entry.file_type().is_dir() {
             continue;
@@ -219,16 +324,15 @@ fn find_largest_source_files(path: &Path, limit: usize) -> Vec<std::path::PathBu
         .max_depth(8)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
     {
         if !entry.file_type().is_file() {
             continue;
         }
 
         let file_path = entry.path();
-        let ext = match file_path.extension().and_then(|e| e.to_str()) {
-            Some(e) => e,
-            None => continue,
+        let Some(ext) = file_path.extension().and_then(|e| e.to_str()) else {
+            continue;
         };
 
         if !SOURCE_EXTENSIONS.contains(&ext) {
@@ -313,13 +417,9 @@ fn extract_types_from_content(content: &str, ext: &str) -> Vec<String> {
             r"type\s+([A-Z]\w+)\s+interface",
         ],
         // Python
-        "py" => &[
-            r"class\s+(\w+)",
-        ],
+        "py" => &[r"class\s+(\w+)"],
         // C#
-        "cs" => &[
-            r"public\s+(?:class|interface|enum|struct|record)\s+(\w+)",
-        ],
+        "cs" => &[r"public\s+(?:class|interface|enum|struct|record)\s+(\w+)"],
         _ => return types,
     };
 
@@ -329,7 +429,7 @@ fn extract_types_from_content(content: &str, ext: &str) -> Vec<String> {
                 if let Some(name) = cap.get(1) {
                     let type_name = name.as_str().to_string();
                     // Only include if it starts with uppercase (convention for types)
-                    if type_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    if type_name.chars().next().is_some_and(char::is_uppercase) {
                         types.push(type_name);
                     }
                 }
@@ -495,7 +595,12 @@ fn detect_tech_stack(path: &Path) -> Vec<String> {
     ];
 
     // Check src directory and root for extensions
-    for dir in [path, &path.join("src"), &path.join("lib"), &path.join("app")] {
+    for dir in [
+        path,
+        &path.join("src"),
+        &path.join("lib"),
+        &path.join("app"),
+    ] {
         if !dir.is_dir() {
             continue;
         }
@@ -528,7 +633,8 @@ fn read_cargo_toml_description(path: &Path) -> Option<String> {
     let content = fs::read_to_string(cargo_path).ok()?;
     let value: toml::Value = content.parse().ok()?;
     // Try [package] first, then [workspace.package]
-    value.get("package")
+    value
+        .get("package")
         .or_else(|| value.get("workspace")?.get("package"))?
         .get("description")?
         .as_str()
@@ -541,14 +647,19 @@ fn read_cargo_keywords(path: &Path) -> Option<Vec<String>> {
     let content = fs::read_to_string(cargo_path).ok()?;
     let value: toml::Value = content.parse().ok()?;
     // Try [package] first, then [workspace.package]
-    let pkg = value.get("package")
+    let pkg = value
+        .get("package")
         .or_else(|| value.get("workspace")?.get("package"))?;
     let keywords = pkg.get("keywords")?.as_array()?;
     let result: Vec<String> = keywords
         .iter()
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
-    if result.is_empty() { None } else { Some(result) }
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 /// Read keywords from package.json
@@ -565,10 +676,18 @@ fn read_package_json_keywords(path: &Path) -> Option<Vec<String>> {
         .split(',')
         .filter_map(|s| {
             let trimmed = s.trim().trim_matches('"');
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         })
         .collect();
-    if keywords.is_empty() { None } else { Some(keywords) }
+    if keywords.is_empty() {
+        None
+    } else {
+        Some(keywords)
+    }
 }
 
 /// Read description from pyproject.toml
@@ -578,12 +697,11 @@ fn read_pyproject_description(path: &Path) -> Option<String> {
     let value: toml::Value = content.parse().ok()?;
 
     // Try [project] section first (PEP 621), then poetry
-    let project = value.get("project")
+    let project = value
+        .get("project")
         .or_else(|| value.get("tool")?.get("poetry"))?;
 
-    project.get("description")?
-        .as_str()
-        .map(String::from)
+    project.get("description")?.as_str().map(String::from)
 }
 
 /// Read first paragraph from README
@@ -623,7 +741,8 @@ fn extract_first_paragraph(content: &str) -> String {
             || trimmed.starts_with("<!--")    // comments
             || trimmed.starts_with("* ")      // bullet points (with space)
             || trimmed.starts_with("- ")      // bullet points (with space)
-            || trimmed.contains("shields.io") // badges
+            || trimmed.contains("shields.io")
+        // badges
         {
             continue;
         }
@@ -676,7 +795,7 @@ fn strip_html_tags(content: &str) -> String {
 
 // Simple JSON extraction without serde_json
 fn extract_json_string(json: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{}\"", key);
+    let pattern = format!("\"{key}\"");
     let start = json.find(&pattern)?;
     let after_key = &json[start + pattern.len()..];
 
@@ -687,7 +806,6 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
 
     Some(rest[..value_end].to_string())
 }
-
 
 /// Index all unindexed projects
 pub fn index_projects(db: &Database) -> Result<usize> {
@@ -717,8 +835,15 @@ pub fn index_projects(db: &Database) -> Result<usize> {
     let embeddings = embed_texts(&texts)?;
 
     // Store in database (vector embedding + metadata + FTS5 entry)
-    for ((id, name, meta), (embedding, text)) in project_info.iter().zip(embeddings.iter().zip(texts.iter())) {
-        db.upsert_metadata(*id, meta.description.as_deref(), meta.readme_excerpt.as_deref(), text)?;
+    for ((id, name, meta), (embedding, text)) in
+        project_info.iter().zip(embeddings.iter().zip(texts.iter()))
+    {
+        db.upsert_metadata(
+            *id,
+            meta.description.as_deref(),
+            meta.readme_excerpt.as_deref(),
+            text,
+        )?;
         db.upsert_embedding(*id, embedding)?;
         db.fts_upsert(*id, name, text)?;
     }
@@ -736,10 +861,16 @@ const RRF_SCALE: f32 = 4270.0;
 /// Merge dense (vector) and sparse (FTS5) results via Reciprocal Rank Fusion.
 /// Score = min((Σ 1/(k+rank_i)) * scale, 100). Returns sorted best-first.
 fn rrf_merge(dense: &[(i64, f32)], sparse: &[(i64, f32)]) -> Vec<(i64, f32)> {
-    let dense_ranks: HashMap<i64, usize> =
-        dense.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect();
-    let sparse_ranks: HashMap<i64, usize> =
-        sparse.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect();
+    let dense_ranks: HashMap<i64, usize> = dense
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
+        .collect();
+    let sparse_ranks: HashMap<i64, usize> = sparse
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
+        .collect();
 
     let mut all_ids: Vec<i64> = dense_ranks.keys().copied().collect();
     for id in sparse_ranks.keys() {
@@ -751,8 +882,12 @@ fn rrf_merge(dense: &[(i64, f32)], sparse: &[(i64, f32)]) -> Vec<(i64, f32)> {
     let mut scored: Vec<(i64, f32)> = all_ids
         .into_iter()
         .map(|id| {
-            let d = dense_ranks.get(&id).map(|&r| 1.0 / (RRF_K + r as f32 + 1.0)).unwrap_or(0.0);
-            let s = sparse_ranks.get(&id).map(|&r| 1.0 / (RRF_K + r as f32 + 1.0)).unwrap_or(0.0);
+            let d = dense_ranks
+                .get(&id)
+                .map_or(0.0, |&r| 1.0 / (RRF_K + r as f32 + 1.0));
+            let s = sparse_ranks
+                .get(&id)
+                .map_or(0.0, |&r| 1.0 / (RRF_K + r as f32 + 1.0));
             ((id), ((d + s) * RRF_SCALE).min(100.0))
         })
         .collect();
@@ -762,7 +897,11 @@ fn rrf_merge(dense: &[(i64, f32)], sparse: &[(i64, f32)]) -> Vec<(i64, f32)> {
 }
 
 /// Perform hybrid semantic search (dense vectors + FTS5 BM25) merged via RRF
-pub fn semantic_search(db: &Database, query: &str, limit: usize) -> Result<Vec<(crate::db::Project, f32)>> {
+pub fn semantic_search(
+    db: &Database,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<(crate::db::Project, f32)>> {
     let query_embedding = embed_text(query)?;
     let dense = db.find_similar(&query_embedding, limit)?;
     let sparse = db.fts_search(query, limit).unwrap_or_default();

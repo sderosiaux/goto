@@ -73,14 +73,22 @@ impl Database {
     pub fn open() -> Result<Self> {
         // Initialize sqlite-vec extension (must be done before opening connection)
         unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute::<*const (), unsafe extern "C" fn(*mut rusqlite::ffi::sqlite3, *mut *mut i8, *const rusqlite::ffi::sqlite3_api_routines) -> i32>(sqlite3_vec_init as *const ())));
+            sqlite3_auto_extension(Some(std::mem::transmute::<
+                *const (),
+                unsafe extern "C" fn(
+                    *mut rusqlite::ffi::sqlite3,
+                    *mut *mut i8,
+                    *const rusqlite::ffi::sqlite3_api_routines,
+                ) -> i32,
+            >(sqlite3_vec_init as *const ())));
         }
 
         let db_path = Config::db_path()?;
 
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create data directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create data directory: {}", parent.display())
+            })?;
         }
 
         let conn = Connection::open(&db_path)
@@ -132,9 +140,8 @@ impl Database {
             &format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS project_embeddings USING vec0(
                     project_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[{}]
-                )",
-                EMBEDDING_DIM
+                    embedding FLOAT[{EMBEDDING_DIM}]
+                )"
             ),
             [],
         )?;
@@ -149,20 +156,28 @@ impl Database {
     }
 
     /// Batch insert/update projects in a single transaction
-    pub fn upsert_projects_batch(&mut self, paths: &[PathBuf], source: ProjectSource) -> Result<usize> {
+    pub fn upsert_projects_batch(
+        &mut self,
+        paths: &[PathBuf],
+        source: ProjectSource,
+    ) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let count = Self::upsert_in_transaction(&tx, paths, source)?;
         tx.commit()?;
         Ok(count)
     }
 
-    fn upsert_in_transaction(tx: &Transaction, paths: &[PathBuf], source: ProjectSource) -> Result<usize> {
+    fn upsert_in_transaction(
+        tx: &Transaction,
+        paths: &[PathBuf],
+        source: ProjectSource,
+    ) -> Result<usize> {
         let mut stmt = tx.prepare(
             "INSERT INTO projects (path, name, last_accessed, access_count, last_modified, source)
              VALUES (?1, ?2, ?3, 0, ?4, ?5)
              ON CONFLICT(path) DO UPDATE SET
                  last_modified = ?4,
-                 source = CASE WHEN source = 'manual' THEN 'manual' ELSE ?5 END"
+                 source = CASE WHEN source = 'manual' THEN 'manual' ELSE ?5 END",
         )?;
 
         let now = Utc::now().to_rfc3339();
@@ -170,15 +185,14 @@ impl Database {
         let mut count = 0;
 
         for path in paths {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string_lossy().to_string());
+            let name = path.file_name().map_or_else(
+                || path.to_string_lossy().to_string(),
+                |n| n.to_string_lossy().to_string(),
+            );
 
             let last_modified = std::fs::metadata(path)
                 .and_then(|m| m.modified())
-                .map(DateTime::<Utc>::from)
-                .unwrap_or_else(|_| Utc::now())
+                .map_or_else(|_| Utc::now(), DateTime::<Utc>::from)
                 .to_rfc3339();
 
             stmt.execute(params![
@@ -216,10 +230,12 @@ impl Database {
                     path: PathBuf::from(row.get::<_, String>(0)?),
                     name: row.get(1)?,
                     last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     access_count: row.get(3)?,
-                    source: row.get::<_, String>(4)?.parse().unwrap_or(ProjectSource::Scan),
+                    source: row
+                        .get::<_, String>(4)?
+                        .parse()
+                        .unwrap_or(ProjectSource::Scan),
                 })
             })
             .optional()?;
@@ -240,10 +256,12 @@ impl Database {
                 path: PathBuf::from(row.get::<_, String>(0)?),
                 name: row.get(1)?,
                 last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                 access_count: row.get(3)?,
-                source: row.get::<_, String>(4)?.parse().unwrap_or(ProjectSource::Scan),
+                source: row
+                    .get::<_, String>(4)?
+                    .parse()
+                    .unwrap_or(ProjectSource::Scan),
             })
         })?;
         projects.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -251,19 +269,19 @@ impl Database {
 
     /// Get all projects
     pub fn get_all_projects(&self) -> Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT path, name, last_accessed, access_count, source FROM projects"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, name, last_accessed, access_count, source FROM projects")?;
 
         let projects = stmt.query_map([], |row| {
             Ok(Project {
                 path: PathBuf::from(row.get::<_, String>(0)?),
                 name: row.get(1)?,
                 last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                 access_count: row.get(3)?,
-                source: row.get::<_, String>(4)?
+                source: row
+                    .get::<_, String>(4)?
                     .parse()
                     .unwrap_or(ProjectSource::Scan),
             })
@@ -296,11 +314,17 @@ impl Database {
         }
 
         // Single DELETE with IN clause (CASCADE handles project_metadata + project_embeddings)
-        let placeholders = missing_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let fts_sql = format!("DELETE FROM project_fts WHERE rowid IN ({})", placeholders);
-        self.conn.execute(&fts_sql, rusqlite::params_from_iter(missing_ids.iter()))?;
-        let sql = format!("DELETE FROM projects WHERE id IN ({})", placeholders);
-        self.conn.execute(&sql, rusqlite::params_from_iter(missing_ids.iter()))?;
+        let placeholders = missing_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let fts_sql = format!("DELETE FROM project_fts WHERE rowid IN ({placeholders})");
+        self.conn
+            .execute(&fts_sql, rusqlite::params_from_iter(missing_ids.iter()))?;
+        let sql = format!("DELETE FROM projects WHERE id IN ({placeholders})");
+        self.conn
+            .execute(&sql, rusqlite::params_from_iter(missing_ids.iter()))?;
 
         Ok(missing_ids.len())
     }
@@ -330,7 +354,10 @@ impl Database {
     }
 
     /// Batch fetch embedded_text for multiple projects (replaces N+1 single-query calls)
-    pub fn get_embedded_texts_batch(&self, paths: &[PathBuf]) -> Result<std::collections::HashMap<PathBuf, String>> {
+    pub fn get_embedded_texts_batch(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<std::collections::HashMap<PathBuf, String>> {
         if paths.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
@@ -339,13 +366,18 @@ impl Database {
             "SELECT p.path, pm.embedded_text
              FROM project_metadata pm
              JOIN projects p ON pm.project_id = p.id
-             WHERE p.path IN ({}) AND pm.embedded_text IS NOT NULL",
-            placeholders
+             WHERE p.path IN ({placeholders}) AND pm.embedded_text IS NOT NULL"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let path_strs: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let path_strs: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         let results = stmt.query_map(rusqlite::params_from_iter(path_strs.iter()), |row| {
-            Ok((PathBuf::from(row.get::<_, String>(0)?), row.get::<_, String>(1)?))
+            Ok((
+                PathBuf::from(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+            ))
         })?;
         let mut map = std::collections::HashMap::new();
         for result in results {
@@ -421,10 +453,10 @@ impl Database {
                     path: PathBuf::from(row.get::<_, String>(0)?),
                     name: row.get(1)?,
                     last_accessed: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     access_count: row.get(3)?,
-                    source: row.get::<_, String>(4)?
+                    source: row
+                        .get::<_, String>(4)?
                         .parse()
                         .unwrap_or(ProjectSource::Scan),
                 })
@@ -436,7 +468,8 @@ impl Database {
 
     /// Insert or replace an FTS5 entry for a project
     pub fn fts_upsert(&self, project_id: i64, name: &str, embedded_text: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM project_fts WHERE rowid = ?", [project_id])?;
+        self.conn
+            .execute("DELETE FROM project_fts WHERE rowid = ?", [project_id])?;
         self.conn.execute(
             "INSERT INTO project_fts(rowid, name, embedded_text) VALUES (?, ?, ?)",
             params![project_id, name, embedded_text],
@@ -446,9 +479,8 @@ impl Database {
 
     /// Keyword search via FTS5 BM25 — returns (project_id, rank) sorted best-first
     pub fn fts_search(&self, query: &str, limit: usize) -> Result<Vec<(i64, f32)>> {
-        let fts_query = match prepare_fts_query(query) {
-            Some(q) => q,
-            None => return Ok(vec![]),
+        let Some(fts_query) = prepare_fts_query(query) else {
+            return Ok(vec![]);
         };
         let mut stmt = self.conn.prepare(
             "SELECT rowid, rank FROM project_fts WHERE project_fts MATCH ? ORDER BY rank LIMIT ?",
@@ -472,11 +504,11 @@ impl Database {
         let total: usize = self
             .conn
             .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))?;
-        let indexed: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM project_embeddings",
-            [],
-            |row| row.get(0),
-        )?;
+        let indexed: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM project_embeddings", [], |row| {
+                    row.get(0)
+                })?;
         Ok((indexed, total))
     }
 }
@@ -493,7 +525,7 @@ fn prepare_fts_query(query: &str) -> Option<String> {
                 .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
                 .collect();
             if clean.len() >= 2 {
-                Some(format!("\"{}\"*", clean))
+                Some(format!("\"{clean}\"*"))
             } else {
                 None
             }

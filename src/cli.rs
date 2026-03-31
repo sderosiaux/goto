@@ -103,7 +103,9 @@ impl std::str::FromStr for SortOrder {
             "recent" | "r" => Ok(SortOrder::Recent),
             "frecency" | "f" => Ok(SortOrder::Frecency),
             "name" | "n" => Ok(SortOrder::Name),
-            _ => Err(format!("Unknown sort order: {s}. Use: recent, frecency, or name")),
+            _ => Err(format!(
+                "Unknown sort order: {s}. Use: recent, frecency, or name"
+            )),
         }
     }
 }
